@@ -1,0 +1,40 @@
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
+
+### Added
+- Django Datalog engine with fact-based data modeling
+- Logic programming with inference rules using Python syntax
+- Query system with variable binding and constraint support
+- Q object integration for filtering query results
+- Performance optimizations including query reordering and batch hydration
+- Modular architecture with separate facts, query, and rules modules
+- Comprehensive test suite with family relationship examples
+- Conditional test model loading for package testing
+- Support for both hydrated objects and PK-only queries
+
+### Features
+- **Fact Definition**: Define facts as Python dataclasses with Django model integration
+- **Inference Rules**: Write rules to derive new facts from existing ones
+- **Query Engine**: Query facts with variable binding and automatic inference
+- **Django Q Objects**: Use Django's Q objects to add constraints to query variables
+- **Performance**: Intelligent query planning and batch operations
+- **Testing**: Built-in test framework with example models and facts
+
+### Performance
+- Query reordering based on selectivity and variable constraints
+- Batch hydration of model instances to reduce database queries
+- PK-only query mode for improved performance when full objects aren't needed
+- Cached model type metadata to avoid runtime type introspection
+
+### Technical
+- Modular package structure separating facts, queries, and rules
+- Automatic Django model generation from fact definitions
+- Django app integration with proper migrations and settings
+- Type hints throughout with support for Union types (Model | Var)
+- Comprehensive error handling and validation
