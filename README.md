@@ -32,7 +32,7 @@ INSTALLED_APPS = [
 
 ```python
 from dataclasses import dataclass
-from djdatalog import Fact, Var, query, rule, store_facts
+from djdatalog.models import Fact, Var, query, rule, store_facts
 from django.contrib.auth.models import User
 
 # Define facts
@@ -85,6 +85,9 @@ for result in query(ParentOf(Var("parent", where=Q(is_active=True)), Var("child"
 Filter query variables using Django Q objects:
 
 ```python
+from djdatalog.models import Var, query
+from django.db.models import Q
+
 # Find active users who are parents
 active_parents = query(ParentOf(Var("parent", where=Q(is_active=True)), Var("child")))
 
@@ -100,6 +103,8 @@ adults = query(ParentOf(
 Control whether to fetch full model instances or just PKs:
 
 ```python
+from djdatalog.models import query, Var
+
 # Get full objects (default)
 results = list(query(ParentOf(alice, Var("child")), hydrate=True))
 print(results[0]["child"].username)  # Full User object
@@ -114,6 +119,9 @@ print(results[0]["child"])  # Just the user ID
 Chain multiple inference rules:
 
 ```python
+from dataclasses import dataclass
+from djdatalog.models import Fact, Var, rule
+
 @dataclass
 class SiblingOf(Fact):
     subject: User | Var

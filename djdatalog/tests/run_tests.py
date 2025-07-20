@@ -220,8 +220,12 @@ def test_query_signature():
         import os
         
         # Add parent directory to path to import djdatalog
-        parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        sys.path.insert(0, parent_dir)
+        try:
+            parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            sys.path.insert(0, parent_dir)
+        except NameError:
+            # __file__ not defined when run via exec, skip path setup
+            pass
         
         from djdatalog.models import query
         
