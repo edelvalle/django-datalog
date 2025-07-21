@@ -46,9 +46,7 @@ class Department(models.Model):
 
     name = models.CharField(max_length=100)
     company = models.ForeignKey(Company, on_delete=models.CASCADE)
-    budget = models.DecimalField(
-        max_digits=10, decimal_places=2, default=Decimal("0.00")
-    )
+    budget = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal("0.00"))
 
     def __str__(self):
         return f"{self.name} - {self.company.name}"
@@ -58,21 +56,15 @@ class Employee(models.Model):
     """Employee model that can work with both Person and User."""
 
     # Optional relationship to Person (for internal django_datalog tests)
-    person = models.OneToOneField(
-        Person, on_delete=models.CASCADE, null=True, blank=True
-    )
+    person = models.OneToOneField(Person, on_delete=models.CASCADE, null=True, blank=True)
 
     # Optional relationship to User (for Django integration tests)
     user = models.OneToOneField(User, on_delete=models.CASCADE, null=True, blank=True)
 
     company = models.ForeignKey(Company, on_delete=models.CASCADE)
-    department = models.ForeignKey(
-        Department, on_delete=models.CASCADE, null=True, blank=True
-    )
+    department = models.ForeignKey(Department, on_delete=models.CASCADE, null=True, blank=True)
     position = models.CharField(max_length=100, blank=True)
-    salary = models.DecimalField(
-        max_digits=10, decimal_places=2, default=Decimal("0.00")
-    )
+    salary = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal("0.00"))
     hire_date = models.DateField(null=True, blank=True)
     is_manager = models.BooleanField(default=False)
 

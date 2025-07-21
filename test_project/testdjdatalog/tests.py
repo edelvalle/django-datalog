@@ -75,9 +75,7 @@ class DjdatalogIntegrationTest(TransactionTestCase):
         tech_corp_employees = list(query(WorksFor(Var("employee"), self.tech_corp)))
         self.assertEqual(len(tech_corp_employees), 2)
 
-        employee_names = {
-            result["employee"].user.username for result in tech_corp_employees
-        }
+        employee_names = {result["employee"].user.username for result in tech_corp_employees}
         self.assertIn("alice", employee_names)
         self.assertIn("bob", employee_names)
 
@@ -90,9 +88,7 @@ class DjdatalogIntegrationTest(TransactionTestCase):
         )
 
         # Query for managers only
-        managers = list(
-            query(WorksFor(Var("employee", where=Q(is_manager=True)), self.tech_corp))
-        )
+        managers = list(query(WorksFor(Var("employee", where=Q(is_manager=True)), self.tech_corp)))
 
         self.assertEqual(len(managers), 1)  # Only Alice is a manager
         self.assertEqual(managers[0]["employee"], self.emp_alice)
@@ -102,16 +98,12 @@ class DjdatalogIntegrationTest(TransactionTestCase):
         store_facts(WorksFor(subject=self.emp_alice, object=self.tech_corp))
 
         # Test with hydration (default)
-        hydrated_results = list(
-            query(WorksFor(Var("employee"), self.tech_corp), hydrate=True)
-        )
+        hydrated_results = list(query(WorksFor(Var("employee"), self.tech_corp), hydrate=True))
         self.assertEqual(len(hydrated_results), 1)
         self.assertIsInstance(hydrated_results[0]["employee"], Employee)
 
         # Test without hydration
-        pk_results = list(
-            query(WorksFor(Var("employee"), self.tech_corp), hydrate=False)
-        )
+        pk_results = list(query(WorksFor(Var("employee"), self.tech_corp), hydrate=False))
         self.assertEqual(len(pk_results), 1)
         self.assertIsInstance(pk_results[0]["employee"], int)  # Should be PK
 
@@ -147,9 +139,7 @@ class DjdatalogIntegrationTest(TransactionTestCase):
         store_facts(*facts_to_store)
 
         # Query should be efficient - limit database queries
-        with self.assertNumQueries(
-            16
-        ):  # Current performance (before PK hydration optimization)
+        with self.assertNumQueries(16):  # Current performance (before PK hydration optimization)
             results = list(query(WorksFor(Var("employee"), self.tech_corp)))
             # Access related data to test for N+1 issues
             for result in results:

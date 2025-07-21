@@ -24,18 +24,10 @@ class FactsAndRulesTests(TestCase):
     def setUp(self):
         """Set up test data."""
         # Create people
-        self.john = Person.objects.create(
-            name="John", age=65, city="New York", married=True
-        )
-        self.alice = Person.objects.create(
-            name="Alice", age=40, city="New York", married=True
-        )
-        self.bob = Person.objects.create(
-            name="Bob", age=18, city="Boston", married=False
-        )
-        self.charlie = Person.objects.create(
-            name="Charlie", age=10, city="New York", married=False
-        )
+        self.john = Person.objects.create(name="John", age=65, city="New York", married=True)
+        self.alice = Person.objects.create(name="Alice", age=40, city="New York", married=True)
+        self.bob = Person.objects.create(name="Bob", age=18, city="Boston", married=False)
+        self.charlie = Person.objects.create(name="Charlie", age=10, city="New York", married=False)
 
         # Create company
         self.company = Company.objects.create(name="ACME Corp", active=True)

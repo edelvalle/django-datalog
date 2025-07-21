@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **Context-local rules**: New `rule_context()` context manager for temporary rules that are only active within a specific scope
+- Support for scoped rule definitions that don't pollute the global rule registry
+- Nested rule contexts with proper isolation between context levels
+
+### Features
+- `rule_context()` context manager allows rules to be defined that are only active within the context
+- Rules can be passed as arguments to `rule_context()` or defined inside the context block
+- Context manager properly restores original global rules when exiting
+- Full support for variable constraints and complex rule logic within contexts
+
 ## [0.1.0] - 2025-01-21
 
 Initial release of django-datalog - a complete datalog inference engine for Django applications.

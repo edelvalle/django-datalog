@@ -8,7 +8,7 @@ specialized modules for facts, queries, and rules.
 # Public API imports
 from django_datalog.facts import Fact, retract_facts, store_facts
 from django_datalog.query import Var, _fact_to_django_query, _prefix_q_object, query
-from django_datalog.rules import Rule, get_rules, rule
+from django_datalog.rules import Rule, get_rules, rule, rule_context
 
 # django_datalog is a library package - storage models should be defined by consuming applications
 
@@ -23,6 +23,7 @@ __all__ = [
     "store_facts",
     "retract_facts",
     "rule",
+    "rule_context",
     "get_rules",
     # Internal functions (exposed for testing)
     "_prefix_q_object",

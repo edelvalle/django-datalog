@@ -2,6 +2,7 @@
 Rule system for djdatalog - handles inference rules and rule evaluation.
 """
 
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any
 
@@ -207,3 +208,50 @@ def _instantiate_fact(pattern_fact: Fact, bindings: dict[str, Any]) -> Fact | No
     # Create new fact instance of the same type
     fact_class = type(pattern_fact)
     return fact_class(subject=subject, object=obj)
+
+
+@contextmanager
+def rule_context(*rule_definitions):
+    """
+    Context manager for temporary rules that are only active within the context.
+
+    Args:
+        *rule_definitions: Optional rule definitions as tuples of (head, *body)
+
+    Usage:
+        # Context manager with rules defined inside
+        with rule_context():
+            rule(TeamMates(Var("emp1"), Var("emp2")),
+                 MemberOf(Var("emp1"), Var("dept")),
+                 MemberOf(Var("emp2"), Var("dept")))
+
+            # Rules are active here
+            teammates = query(TeamMates(Var("emp1"), Var("emp2")))
+
+        # Rules are no longer active here
+
+        # Context manager with rules passed as arguments
+        with rule_context(
+            (TeamMates(Var("emp1"), Var("emp2")),
+             MemberOf(Var("emp1"), Var("dept")),
+             MemberOf(Var("emp2"), Var("dept")))
+        ):
+            # Rules are active here
+            teammates = query(TeamMates(Var("emp1"), Var("emp2")))
+    """
+    # Save the current global rules
+    original_rules = _rules.copy()
+
+    # Add any rules passed as arguments
+    for rule_def in rule_definitions:
+        if isinstance(rule_def, tuple | list) and len(rule_def) >= 2:
+            head = rule_def[0]
+            body = rule_def[1:]
+            rule(head, *body)
+
+    try:
+        yield
+    finally:
+        # Restore the original global rules
+        _rules.clear()
+        _rules.extend(original_rules)

@@ -72,9 +72,7 @@ class Migration(migrations.Migration):
                 ("name", models.CharField(max_length=100)),
                 (
                     "budget",
-                    models.DecimalField(
-                        decimal_places=2, default=Decimal("0.00"), max_digits=10
-                    ),
+                    models.DecimalField(decimal_places=2, default=Decimal("0.00"), max_digits=10),
                 ),
                 (
                     "company",
@@ -100,9 +98,7 @@ class Migration(migrations.Migration):
                 ("position", models.CharField(blank=True, max_length=100)),
                 (
                     "salary",
-                    models.DecimalField(
-                        decimal_places=2, default=Decimal("0.00"), max_digits=10
-                    ),
+                    models.DecimalField(decimal_places=2, default=Decimal("0.00"), max_digits=10),
                 ),
                 ("hire_date", models.DateField(blank=True, null=True)),
                 ("is_manager", models.BooleanField(default=False)),

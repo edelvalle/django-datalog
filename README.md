@@ -144,6 +144,58 @@ for result in managers:
 
 ## Advanced Features
 
+### Context-Local Rules
+
+Use `rule_context()` to define temporary rules that are only active within a specific scope:
+
+```python
+from django_datalog.models import rule_context
+
+# Scenario 1: Rules defined inside context
+with rule_context():
+    # Define temporary rule for active teammates
+    rule(
+        TeamMates(Var("emp1"), Var("emp2")),
+        MemberOf(Var("emp1"), Var("dept")),
+        MemberOf(Var("emp2"), Var("dept")),
+        WorksFor(Var("emp1"), Var("company", where=Q(is_active=True))),
+        WorksFor(Var("emp2"), Var("company", where=Q(is_active=True))),
+    )
+    
+    # Rules are active here - only teammates at active companies
+    active_teammates = list(query(TeamMates(Var("emp1"), Var("emp2"))))
+    
+# Rules are no longer active here - teammates query returns empty
+
+# Scenario 2: Rules passed as arguments
+with rule_context(
+    # Pass rule as tuple: (head, body1, body2, ...)
+    (
+        ColleaguesOf(Var("emp1"), Var("emp2")),
+        WorksFor(Var("emp1"), Var("company")),
+        WorksFor(Var("emp2"), Var("company")),
+    )
+):
+    # Rule is active within this context
+    colleagues = list(query(ColleaguesOf(Var("emp1"), Var("emp2"))))
+
+# Nested contexts work too
+with rule_context():
+    rule(ColleaguesOf(Var("emp1"), Var("emp2")), WorksFor(Var("emp1"), Var("company")), WorksFor(Var("emp2"), Var("company")))
+    
+    with rule_context():
+        rule(TeamMates(Var("emp1"), Var("emp2")), MemberOf(Var("emp1"), Var("dept")), MemberOf(Var("emp2"), Var("dept")))
+        # Both colleague and teammate rules active here
+        
+    # Only colleague rules active here
+```
+
+**Benefits of Context-Local Rules:**
+- **Clean testing**: Define rules only for specific test scenarios
+- **Temporary logic**: Apply business rules conditionally without global pollution
+- **Experimentation**: Try different rule sets without affecting production rules
+- **Isolation**: Prevent rule conflicts between different parts of your application
+
 ### Q Object Constraints
 
 Use Django Q objects to add powerful filtering to your queries:
