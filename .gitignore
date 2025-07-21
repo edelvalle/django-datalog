@@ -34,6 +34,7 @@ env/
 # IDEs
 .vscode/
 .idea/
+*.sublime-*
 
 # Claude Code
 .claude/
