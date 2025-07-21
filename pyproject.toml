@@ -183,3 +183,6 @@ reportUnknownMemberType = false
 reportUnknownVariableType = false
 reportUnknownLambdaType = false
 
+[dependency-groups]
+dev = []
+

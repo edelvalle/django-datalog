@@ -1,3 +1,6 @@
+# Env config
+.envrc
+
 # Python
 __pycache__/
 *.py[cod]
