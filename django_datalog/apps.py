@@ -1,9 +1,9 @@
 from django.apps import AppConfig
 
 
-class DjdatalogConfig(AppConfig):
+class DjangoDatalogConfig(AppConfig):
     default_auto_field = "django.db.models.BigAutoField"
-    name = "djdatalog"
+    name = "django_datalog"
 
     def ready(self):
         pass

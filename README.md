@@ -4,11 +4,11 @@ Django Datalog - A logic programming and inference engine for Django application
 
 ## Features
 
-- **Fact-based data modeling**: Define facts as Python dataclasses with Django model integration
+- **Fact-based data modeling**: Define facts as Python classes that integrate seamlessly with Django models
 - **Logic programming**: Write inference rules using a familiar Python syntax  
 - **Query system**: Query facts and derived conclusions with variable binding
-- **Q object constraints**: Filter query results using Django Q objects
-- **Performance optimized**: Intelligent query reordering and batch hydration
+- **Q object constraints**: Filter query results using Django Q objects for powerful filtering
+- **Performance optimized**: Intelligent query reordering and batch hydration for optimal performance
 - **Django integration**: Seamless integration with existing Django models and ORM
 
 ## Quick Start
@@ -19,135 +19,252 @@ Django Datalog - A logic programming and inference engine for Django application
 pip install django-datalog
 ```
 
-Add `djdatalog` to your `INSTALLED_APPS`:
+Add `django_datalog` to your `INSTALLED_APPS`:
 
 ```python
 INSTALLED_APPS = [
     # ... your other apps
-    'djdatalog',
+    'django_datalog',
 ]
 ```
 
-### Basic Usage
+Run migrations to create the datalog fact tables:
+
+```bash
+python manage.py migrate
+```
+
+### Basic Example: Company Employee Management
+
+Let's start with a realistic business scenario - managing employees in a company:
 
 ```python
-from dataclasses import dataclass
-from djdatalog.models import Fact, Var, query, rule, store_facts
+# models.py
+from django.db import models
 from django.contrib.auth.models import User
+from django_datalog.models import Fact, Var
 
-# Define facts
-@dataclass
-class ParentOf(Fact):
-    \"\"\"Person is parent of another person\"\"\"
-    subject: User | Var  # Parent
-    object: User | Var   # Child
+class Company(models.Model):
+    name = models.CharField(max_length=100)
+    
+class Department(models.Model):
+    name = models.CharField(max_length=100)
+    company = models.ForeignKey(Company, on_delete=models.CASCADE)
 
-@dataclass 
-class GrandparentOf(Fact):
-    \"\"\"Person is grandparent of another person (inferred)\"\"\"
-    subject: User | Var  # Grandparent
-    object: User | Var   # Grandchild
+class Employee(models.Model):
+    user = models.OneToOneField(User, on_delete=models.CASCADE)
+    company = models.ForeignKey(Company, on_delete=models.CASCADE)
+    department = models.ForeignKey(Department, on_delete=models.CASCADE)
+    is_manager = models.BooleanField(default=False)
 
-# Define inference rules
+# Define Facts - Note: No @dataclass decorator needed!
+class WorksFor(Fact):
+    """Employee works for a company."""
+    subject: Employee | Var  # Employee
+    object: Company | Var    # Company
+
+class MemberOf(Fact):
+    """Employee is member of a department."""
+    subject: Employee | Var    # Employee
+    object: Department | Var   # Department
+
+class ColleaguesOf(Fact):
+    """Two employees are colleagues (inferred from working at same company)."""
+    subject: Employee | Var  # Employee 1
+    object: Employee | Var   # Employee 2
+
+class TeamMates(Fact):
+    """Two employees are teammates (inferred from same department)."""
+    subject: Employee | Var  # Employee 1
+    object: Employee | Var   # Employee 2
+```
+
+```python
+# rules.py - Define inference logic
+from django_datalog.rules import rule
+from django_datalog.models import Var
+from .models import WorksFor, MemberOf, ColleaguesOf, TeamMates
+
+# Rule: Employees are colleagues if they work for the same company
 rule(
-    GrandparentOf(Var("grandparent"), Var("grandchild")),
-    # := (implied by)
-    ParentOf(Var("grandparent"), Var("parent")),
-    ParentOf(Var("parent"), Var("grandchild"))
+    ColleaguesOf(Var("emp1"), Var("emp2")),
+    WorksFor(Var("emp1"), Var("company")),
+    WorksFor(Var("emp2"), Var("company")),
 )
 
-# Store facts
-john = User.objects.get(username="john")
-alice = User.objects.get(username="alice") 
-bob = User.objects.get(username="bob")
-
-store_facts(
-    ParentOf(subject=john, object=alice),
-    ParentOf(subject=alice, object=bob)
+# Rule: Employees are teammates if they work in the same department  
+rule(
+    TeamMates(Var("emp1"), Var("emp2")),
+    MemberOf(Var("emp1"), Var("department")),
+    MemberOf(Var("emp2"), Var("department")),
 )
+```
 
-# Query with inference
-for result in query(GrandparentOf(john, Var("grandchild"))):
-    print(f"John is grandparent of {result['grandchild'].username}")
-    # Output: John is grandparent of bob
-
-# Query with constraints
+```python
+# Usage in views.py or management commands
+from django_datalog.models import query, store_facts
 from django.db.models import Q
 
-for result in query(ParentOf(Var("parent", where=Q(is_active=True)), Var("child"))):
-    print(f"{result['parent']} -> {result['child']}")
+# Store some facts
+tech_corp = Company.objects.create(name="Tech Corp")
+engineering = Department.objects.create(name="Engineering", company=tech_corp)
+
+alice_user = User.objects.create(username="alice")
+bob_user = User.objects.create(username="bob")
+
+alice = Employee.objects.create(user=alice_user, company=tech_corp, department=engineering, is_manager=True)
+bob = Employee.objects.create(user=bob_user, company=tech_corp, department=engineering)
+
+# Store facts about work relationships
+store_facts(
+    WorksFor(subject=alice, object=tech_corp),
+    WorksFor(subject=bob, object=tech_corp),
+    MemberOf(subject=alice, object=engineering),
+    MemberOf(subject=bob, object=engineering),
+)
+
+# Query: Find all of Alice's colleagues (inferred automatically!)
+colleagues = list(query(ColleaguesOf(alice, Var("colleague"))))
+for result in colleagues:
+    colleague = result["colleague"]
+    print(f"Alice works with {colleague.user.username}")
+
+# Query: Find all teammates in engineering
+teammates = list(query(TeamMates(Var("emp1"), Var("emp2"))))
+for result in teammates:
+    emp1, emp2 = result["emp1"], result["emp2"]
+    print(f"{emp1.user.username} and {emp2.user.username} are teammates")
+
+# Query with constraints: Find managers who work for Tech Corp
+managers = list(query(WorksFor(Var("employee", where=Q(is_manager=True)), tech_corp)))
+for result in managers:
+    manager = result["employee"]
+    print(f"{manager.user.username} is a manager at {tech_corp.name}")
 ```
 
 ## Advanced Features
 
 ### Q Object Constraints
 
-Filter query variables using Django Q objects:
+Use Django Q objects to add powerful filtering to your queries:
 
 ```python
-from djdatalog.models import Var, query
 from django.db.models import Q
 
-# Find active users who are parents
-active_parents = query(ParentOf(Var("parent", where=Q(is_active=True)), Var("child")))
+# Find senior employees (with complex constraints)
+senior_employees = query(
+    WorksFor(
+        Var("employee", where=Q(user__date_joined__year__lt=2020) & Q(is_manager=True)), 
+        Var("company")
+    )
+)
 
-# Complex constraints with AND/OR
-adults = query(ParentOf(
-    Var("parent", where=Q(age__gte=18) & Q(is_staff=False)), 
-    Var("child")
-))
+# Find employees in specific departments
+engineering_employees = query(
+    MemberOf(Var("employee"), Var("dept", where=Q(name__icontains="engineering")))
+)
 ```
 
 ### Hydration Control
 
-Control whether to fetch full model instances or just PKs:
+Control whether to fetch full model instances or just PKs for better performance:
 
 ```python
-from djdatalog.models import query, Var
+# Get full objects (default) - includes all related data
+results = list(query(WorksFor(Var("employee"), tech_corp), hydrate=True))
+employee = results[0]["employee"]
+print(employee.user.username)  # Full Employee object with related User
 
-# Get full objects (default)
-results = list(query(ParentOf(alice, Var("child")), hydrate=True))
-print(results[0]["child"].username)  # Full User object
-
-# Get PKs only (better performance)  
-results = list(query(ParentOf(alice, Var("child")), hydrate=False))
-print(results[0]["child"])  # Just the user ID
+# Get PKs only (better performance for large datasets)  
+results = list(query(WorksFor(Var("employee"), tech_corp), hydrate=False))
+employee_id = results[0]["employee"]  # Just the employee ID (integer)
 ```
 
-### Multiple Rules
+### Family Relationships Example
 
-Chain multiple inference rules:
+Django-datalog also works great for modeling family relationships:
 
 ```python
-from dataclasses import dataclass
-from djdatalog.models import Fact, Var, rule
+class Person(models.Model):
+    name = models.CharField(max_length=100)
+    age = models.IntegerField()
 
-@dataclass
+class ParentOf(Fact):
+    """Person is parent of another person."""
+    subject: Person | Var  # Parent
+    object: Person | Var   # Child
+
+class GrandparentOf(Fact):
+    """Person is grandparent of another person (inferred)."""
+    subject: Person | Var  # Grandparent  
+    object: Person | Var   # Grandchild
+
 class SiblingOf(Fact):
-    subject: User | Var
-    object: User | Var
+    """Person is sibling of another person (inferred)."""
+    subject: Person | Var  # Sibling 1
+    object: Person | Var   # Sibling 2
 
-# Rule: People are siblings if they have the same parent
+# Define family rules
+rule(
+    GrandparentOf(Var("grandparent"), Var("grandchild")),
+    ParentOf(Var("grandparent"), Var("parent")),
+    ParentOf(Var("parent"), Var("grandchild")),
+)
+
 rule(
     SiblingOf(Var("person1"), Var("person2")),
     ParentOf(Var("parent"), Var("person1")),
-    ParentOf(Var("parent"), Var("person2"))
+    ParentOf(Var("parent"), Var("person2")),
 )
 
-# Rule: Siblings are mutual (symmetric relationship)
-rule(
-    SiblingOf(Var("person2"), Var("person1")), 
-    SiblingOf(Var("person1"), Var("person2"))
+# Usage
+john = Person.objects.create(name="John", age=65)
+alice = Person.objects.create(name="Alice", age=40) 
+bob = Person.objects.create(name="Bob", age=15)
+
+store_facts(
+    ParentOf(subject=john, object=alice),
+    ParentOf(subject=alice, object=bob)
 )
+
+# Query: Find Bob's grandparents (automatically inferred!)
+grandparents = list(query(GrandparentOf(Var("grandparent"), bob)))
+print(f"Bob's grandparent: {grandparents[0]['grandparent'].name}")  # John
 ```
+
+## Key Benefits
+
+- **No complex SQL**: Express complex relationship logic in simple Python rules
+- **Automatic inference**: New facts are derived automatically from your rules
+- **Performance optimized**: Query reordering and batch loading for optimal performance  
+- **Django native**: Works seamlessly with your existing Django models and admin
+- **Type safe**: Full type hints and IDE support with modern Python syntax
+
+## Fact Retraction
+
+Remove facts when relationships change:
+
+```python
+from django_datalog.models import retract_facts
+
+# Remove a work relationship
+retract_facts(WorksFor(subject=alice, object=tech_corp))
+
+# The system will automatically update inferred facts like ColleaguesOf
+```
+
+## Requirements
+
+- Python 3.10+
+- Django 5.0+
 
 ## Documentation
 
-For full documentation, visit [our documentation site](#) (to be added).
+For detailed examples, API reference, and advanced usage, see the [repository documentation](https://github.com/edelvalle/django-datalog) and [CHANGELOG.md](CHANGELOG.md).
 
 ## Contributing
 
-We welcome contributions! Please see our [Contributing Guide](#) for details.
+We welcome contributions! Please see our repository on [GitHub](https://github.com/edelvalle/django-datalog) for details.
 
 ## License
 

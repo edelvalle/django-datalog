@@ -5,7 +5,9 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.1.0] - 2025-01-21
+
+Initial release of django-datalog - a complete datalog inference engine for Django applications.
 
 ### Added
 - Django Datalog engine with fact-based data modeling
@@ -38,3 +40,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Django app integration with proper migrations and settings
 - Type hints throughout with support for Union types (Model | Var)
 - Comprehensive error handling and validation
+
+[0.1.0]: https://github.com/edelvalle/django-datalog/releases/tag/v0.1.0

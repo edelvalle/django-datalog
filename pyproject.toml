@@ -8,9 +8,9 @@ dynamic = ["version"]
 description = "Django Datalog - Logic programming and inference engine for Django applications"
 readme = "README.md"
 license = "MIT"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 authors = [
-    { name = "Your Name", email = "your.email@example.com" },
+    { name = "Eddy Ernesto del Valle Pino", email = "eddy@edelvalle.me" },
 ]
 keywords = [
     "django",
@@ -25,27 +25,23 @@ classifiers = [
     "Development Status :: 4 - Beta",
     "Environment :: Web Environment",
     "Framework :: Django",
-    "Framework :: Django :: 3.2",
-    "Framework :: Django :: 4.0",
-    "Framework :: Django :: 4.1", 
-    "Framework :: Django :: 4.2",
     "Framework :: Django :: 5.0",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Programming Language :: Python",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Topic :: Internet :: WWW/HTTP",
     "Topic :: Internet :: WWW/HTTP :: Dynamic Content",
     "Topic :: Software Development :: Libraries :: Application Frameworks",
     "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 dependencies = [
-    "Django>=3.2",
+    "Django>=5",
     "uuid6>=2024.1.12",
 ]
 
@@ -54,11 +50,8 @@ dev = [
     "pytest>=7.0",
     "pytest-django>=4.5",
     "pytest-cov>=4.0",
-    "black>=23.0",
-    "isort>=5.12",
-    "mypy>=1.0",
-    "django-stubs>=4.2",
     "ruff>=0.1",
+    "basedpyright>=1.12",
 ]
 test = [
     "pytest>=7.0", 
@@ -72,18 +65,18 @@ docs = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/yourusername/django-datalog"
+Homepage = "https://github.com/edelvalle/django-datalog"
 Documentation = "https://django-datalog.readthedocs.io/"
-Repository = "https://github.com/yourusername/django-datalog.git"
-Issues = "https://github.com/yourusername/django-datalog/issues"
-Changelog = "https://github.com/yourusername/django-datalog/blob/main/CHANGELOG.md"
+Repository = "https://github.com/edelvalle/django-datalog.git"
+Issues = "https://github.com/edelvalle/django-datalog/issues"
+Changelog = "https://github.com/edelvalle/django-datalog/blob/main/CHANGELOG.md"
 
 [tool.hatch.version]
-path = "djdatalog/__init__.py"
+path = "django_datalog/__init__.py"
 
 [tool.hatch.build.targets.sdist]
 include = [
-    "/djdatalog",
+    "/django_datalog",
     "/tests",
     "/README.md",
     "/CHANGELOG.md",
@@ -91,49 +84,13 @@ include = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["djdatalog"]
-
-[tool.black]
-target-version = ["py39"]
-line-length = 88
-include = '\.pyi?$'
-extend-exclude = '''
-/(
-  # directories
-  \.eggs
-  | \.git
-  | \.hg
-  | \.mypy_cache
-  | \.tox
-  | \.venv
-  | build
-  | dist
-)/
-'''
-
-[tool.isort]
-profile = "black"
-multi_line_output = 3
-line_length = 88
-known_first_party = ["djdatalog"]
-known_django = ["django"]
-sections = ["FUTURE", "STDLIB", "DJANGO", "THIRDPARTY", "FIRSTPARTY", "LOCALFOLDER"]
-
-[tool.mypy]
-python_version = "3.9"
-check_untyped_defs = true
-ignore_missing_imports = true
-warn_unused_ignores = true
-warn_redundant_casts = true
-warn_unused_configs = true
-plugins = ["mypy_django_plugin.main"]
-
-[tool.django-stubs]
-django_settings_module = "tests.settings"
+packages = ["django_datalog"]
 
 [tool.ruff]
-target-version = "py39"
-line-length = 88
+target-version = "py310"
+line-length = 100
+
+[tool.ruff.lint]
 select = [
     "E",  # pycodestyle errors
     "W",  # pycodestyle warnings
@@ -144,13 +101,19 @@ select = [
     "UP", # pyupgrade
 ]
 ignore = [
-    "E501",  # line too long, handled by black
     "B008",  # do not perform function calls in argument defaults
     "C901",  # too complex
 ]
 
-[tool.ruff.per-file-ignores]
+[tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401"]
+"django_datalog/tests/*" = ["F821", "E712", "F841"]  # Allow undefined names, True comparisons, and unused vars in tests
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"
 
 [tool.pytest.ini_options]
 DJANGO_SETTINGS_MODULE = "tests.settings"
@@ -162,7 +125,7 @@ markers = [
 ]
 
 [tool.coverage.run]
-source = ["djdatalog"]
+source = ["django_datalog"]
 omit = [
     "*/migrations/*",
     "*/tests/*",
@@ -182,8 +145,41 @@ exclude_lines = [
     "if __name__ == .__main__.:",
 ]
 
-[dependency-groups]
-dev = [
-    "pytest>=8.4.1",
-    "pytest-django>=4.11.1",
+[tool.basedpyright]
+pythonVersion = "3.10"
+typeCheckingMode = "basic"
+include = ["django_datalog"]
+exclude = [
+    "**/__pycache__",
+    "build", 
+    "dist",
+    ".venv",
+    ".pytest_cache",
+    "test_project",
+    "**/migrations/**",
+    "**/tests/**",
 ]
+reportMissingImports = true
+reportMissingTypeStubs = false
+reportAttributeAccessIssue = false
+reportAssignmentType = false
+reportIncompatibleMethodOverride = false
+reportRedeclaration = false
+reportOperatorIssue = false
+reportArgumentType = false
+reportCallIssue = false
+reportGeneralTypeIssues = false
+reportOptionalOperand = false
+reportOptionalMemberAccess = false
+reportOptionalCall = false
+reportOptionalIterable = false
+reportOptionalContextManager = false
+reportOptionalSubscript = false
+reportPrivateUsage = false
+reportTypeCommentUsage = false
+reportUnknownParameterType = false
+reportUnknownArgumentType = false
+reportUnknownMemberType = false
+reportUnknownVariableType = false
+reportUnknownLambdaType = false
+

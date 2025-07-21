@@ -10,6 +10,9 @@ recursive-include djdatalog *.py
 # Include test files for development
 recursive-include djdatalog/tests *.py
 
+# Exclude test Django project from package distribution
+prune test_project
+
 # Exclude development and build artifacts
 global-exclude *.pyc
 global-exclude *.pyo
@@ -17,3 +20,4 @@ global-exclude *.pyd
 global-exclude __pycache__
 global-exclude *.egg-info
 global-exclude .DS_Store
+global-exclude test_*.py

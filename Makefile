@@ -1,60 +1,53 @@
-.PHONY: help test test-verbose lint format install install-dev clean build publish docs
+.PHONY: help install test lint ruff pyright format check clean build publish
 
-help:
+help: ## Show this help message
 	@echo "django-datalog development commands:"
-	@echo ""
-	@echo "  install      Install package in development mode"
-	@echo "  install-dev  Install with all development dependencies"
-	@echo "  test         Run tests"
-	@echo "  test-verbose Run tests with verbose output"
-	@echo "  lint         Run linting (ruff, mypy)"
-	@echo "  format       Format code (black, isort, ruff)"
-	@echo "  clean        Clean build artifacts"
-	@echo "  build        Build package"
-	@echo "  publish      Publish to PyPI (requires auth)"
-	@echo "  docs         Build documentation"
+	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
 
-install:
-	uv pip install -e .
+install: ## Install development dependencies
+	uv sync --group dev
 
-install-dev:
-	uv pip install -e ".[dev]"
+test: ## Run Django tests
+	cd test_project && uv run python manage.py test testdjdatalog -v 2
 
-test:
-	pytest
-
-test-verbose:
-	pytest -v
-
-lint:
-	ruff check djdatalog
-	mypy djdatalog
+lint: ## Run linting tools (ruff, basedpyright)
+	uv run ruff check django_datalog/
+	uv run basedpyright django_datalog/
 	@echo "✅ Linting passed"
 
-format:
-	black djdatalog tests
-	isort djdatalog tests  
-	ruff check --fix djdatalog
-	@echo "✅ Code formatted"
+ruff: ## Run ruff linter only
+	uv run ruff check django_datalog/
 
-clean:
+pyright: ## Run basedpyright type checker
+	uv run basedpyright django_datalog/
+
+format: ## Auto-format code with ruff (includes import sorting)
+	uv run ruff check --fix --unsafe-fixes django_datalog/
+	uv run ruff format django_datalog/
+	@echo "✅ Code formatted with import sorting"
+
+format-python: ## Format Python files with ruff (includes import sorting)
+	uv run ruff check --fix --unsafe-fixes django_datalog/
+	uv run ruff format django_datalog/
+	@echo "✅ Python code formatted with import sorting"
+
+format-test: ## Format test project code  
+	uv run ruff check --fix --unsafe-fixes test_project/testdjdatalog/
+	uv run ruff format test_project/testdjdatalog/
+	@echo "✅ Test project formatted with import sorting"
+
+check: format lint test ## Format, lint, and test
+
+clean: ## Clean build artifacts
 	rm -rf build/
 	rm -rf dist/
 	rm -rf *.egg-info/
-	find . -type d -name __pycache__ -delete
-	find . -name "*.pyc" -delete
-	find . -name "*.pyo" -delete
+	find . -path "./.venv" -prune -o -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
+	find . -path "./.venv" -prune -o -name "*.pyc" -delete 2>/dev/null || true
+	find . -path "./.venv" -prune -o -name "*.pyo" -delete 2>/dev/null || true
 
-build: clean
+build: clean ## Build the package
 	uv build
 
-publish: build
+publish: build ## Publish to PyPI (requires authentication)
 	uv publish
-
-docs:
-	@echo "Documentation generation not yet implemented"
-	@echo "Will use mkdocs in future versions"
-
-# Run the internal djdatalog tests
-test-internal:
-	cd djdatalog && python tests/run_tests.py
