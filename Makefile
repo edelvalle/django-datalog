@@ -5,7 +5,7 @@ help: ## Show this help message
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
 
 install: ## Install development dependencies
-	uv sync --group dev
+	uv sync --extra dev
 
 test: ## Run Django tests
 	cd test_project && uv run python manage.py test testdjdatalog -v 2

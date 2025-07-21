@@ -8,7 +8,7 @@ dynamic = ["version"]
 description = "Django Datalog - Logic programming and inference engine for Django applications"
 readme = "README.md"
 license = "MIT"
-requires-python = ">=3.10"
+requires-python = ">=3.13"
 authors = [
     { name = "Eddy Ernesto del Valle Pino", email = "eddy@edelvalle.me" },
 ]
@@ -87,7 +87,7 @@ include = [
 packages = ["django_datalog"]
 
 [tool.ruff]
-target-version = "py310"
+target-version = "py313"
 line-length = 100
 
 [tool.ruff.lint]
@@ -146,7 +146,7 @@ exclude_lines = [
 ]
 
 [tool.basedpyright]
-pythonVersion = "3.10"
+pythonVersion = "3.13"
 typeCheckingMode = "basic"
 include = ["django_datalog"]
 exclude = [
@@ -183,6 +183,4 @@ reportUnknownMemberType = false
 reportUnknownVariableType = false
 reportUnknownLambdaType = false
 
-[dependency-groups]
-dev = []
 
