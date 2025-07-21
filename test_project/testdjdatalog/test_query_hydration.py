@@ -12,7 +12,7 @@ from django_datalog.models import Var, query
 class QueryHydrationTests(TestCase):
     """Test query hydration controls."""
 
-    @patch("django_datalog.query._satisfy_conjunction_with_facts")
+    @patch("django_datalog.query._satisfy_conjunction_with_targeted_facts")
     @patch("django_datalog.query._hydrate_results")
     def test_hydration_enabled_calls_hydrate_results(self, mock_hydrate, mock_satisfy):
         """Test that hydrate=True calls _hydrate_results."""
@@ -29,13 +29,13 @@ class QueryHydrationTests(TestCase):
         # Query with hydration enabled (default)
         list(query(mock_fact, hydrate=True))
 
-        # Verify _satisfy_conjunction_with_facts was called
+        # Verify _satisfy_conjunction_with_targeted_facts was called
         mock_satisfy.assert_called_once()
 
         # Verify _hydrate_results was called with the PK results
         mock_hydrate.assert_called_once_with(mock_pk_results, [mock_fact])
 
-    @patch("django_datalog.query._satisfy_conjunction_with_facts")
+    @patch("django_datalog.query._satisfy_conjunction_with_targeted_facts")
     @patch("django_datalog.query._hydrate_results")
     def test_hydration_disabled_skips_hydrate_results(self, mock_hydrate, mock_satisfy):
         """Test that hydrate=False skips _hydrate_results."""
@@ -51,7 +51,7 @@ class QueryHydrationTests(TestCase):
         # Query with hydration disabled
         results = list(query(mock_fact, hydrate=False))
 
-        # Verify _satisfy_conjunction_with_facts was called
+        # Verify _satisfy_conjunction_with_targeted_facts was called
         mock_satisfy.assert_called_once()
 
         # Verify _hydrate_results was NOT called
@@ -60,7 +60,7 @@ class QueryHydrationTests(TestCase):
         # Verify we got the PK results directly
         self.assertEqual(results, mock_pk_results)
 
-    @patch("django_datalog.query._satisfy_conjunction_with_facts")
+    @patch("django_datalog.query._satisfy_conjunction_with_targeted_facts")
     def test_hydration_default_is_true(self, mock_satisfy):
         """Test that hydration defaults to True."""
         # Setup mocks

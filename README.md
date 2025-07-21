@@ -144,6 +144,88 @@ for result in managers:
 
 ## Advanced Features
 
+### Intelligent Query Optimization (🚀 NEW!)
+
+Django-datalog includes an adaptive query optimizer that automatically:
+
+1. **Propagates constraints** across variables with the same name
+2. **Orders query execution** by selectivity (most selective first)  
+3. **Learns from execution times** to improve future query planning
+4. **Adapts performance** based on historical data
+5. **Pushes constraints to the database** for maximum performance
+
+```python
+# The optimizer works automatically - no changes needed to your code!
+results = query(
+    ColleaguesOf(Var("emp1"), Var("emp2", where=Q(department="Engineering"))),
+    WorksFor(Var("emp1"), Var("company", where=Q(is_active=True))),
+    WorksFor(Var("emp2"), Var("company"))
+)
+
+# Behind the scenes, the optimizer:
+# 1. Propagates Q(department="Engineering") to ALL emp2 variables
+# 2. Propagates Q(is_active=True) to ALL company variables  
+# 3. Reorders execution to run most selective constraints first
+# 4. Records execution times for each pattern type
+# 5. Uses timing data to optimize future query planning
+# 6. Result: Massive performance improvements that get better over time!
+```
+
+**Constraint Propagation Example:**
+```python
+# You write this natural query:
+active_managers = query(
+    ManagerOf(Var("mgr", where=Q(is_manager=True)), Var("emp")),
+    WorksFor(Var("mgr"), Var("company", where=Q(is_active=True))),
+    WorksFor(Var("emp"), Var("company"))
+)
+
+# Optimizer automatically transforms it to:
+# ManagerOf(Var("mgr", where=Q(is_manager=True)), Var("emp")),
+# WorksFor(Var("mgr", where=Q(is_manager=True)), Var("company", where=Q(is_active=True))),  
+# WorksFor(Var("emp"), Var("company", where=Q(is_active=True)))
+# 
+# Result: All constraints are applied everywhere, and execution is optimized!
+```
+
+**Rule Constraint Propagation:**
+```python  
+# Constraints in rule heads automatically propagate to rule bodies:
+rule(
+    SeniorManager(Var("mgr", where=Q(seniority__gte=5)), Var("dept")),
+    WorksFor(Var("mgr"), Var("company")),  # Gets Q(seniority__gte=5) automatically!
+    MemberOf(Var("mgr"), Var("dept"))      # Gets Q(seniority__gte=5) automatically!
+)
+```
+
+**Adaptive Query Optimization:**
+```python
+from django_datalog.models import (
+    get_optimizer_timing_stats, 
+    time_fact_execution
+)
+
+# The query planner automatically learns from execution times
+results1 = query(WorksFor(Var("emp"), Var("company")))  # Times this query
+results2 = query(WorksFor(Var("emp", where=Q(is_manager=True)), Var("company")))  # Times this too
+
+# Check what the optimizer has learned
+stats = get_optimizer_timing_stats()
+print(stats)
+# {
+#   'WorksFor': {'count': 1, 'avg_time': 0.005, 'min_time': 0.005, 'max_time': 0.005},
+#   'WorksFor(subject:Q(is_manager=True))': {'count': 1, 'avg_time': 0.001, 'min_time': 0.001, 'max_time': 0.001}
+# }
+
+# Future queries automatically use this knowledge to execute faster patterns first!
+# The constrained pattern will be prioritized because it's historically faster
+
+# Manual timing (if needed)
+with time_fact_execution(my_pattern):
+    # Your custom query logic here
+    custom_results = do_something()
+```
+
 ### Context-Local Rules
 
 Use `rule_context()` to define temporary rules that are only active within a specific scope:

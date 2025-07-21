@@ -2,31 +2,28 @@
 Query system for djdatalog - handles querying facts with inference and optimization.
 """
 
+import uuid
 from collections.abc import Iterator
-from dataclasses import dataclass
+from dataclasses import fields
 from typing import Any
 
 from django.db.models import Q
 
-from django_datalog.facts import Fact
-
-
-@dataclass(slots=True)
-class Var:
-    """Variable placeholder for datalog queries."""
-
-    name: str
-    where: Any = None  # Q object for additional constraints
-
-    def __repr__(self):
-        if self.where is not None:
-            return f"Var({self.name!r}, where={self.where!r})"
-        return f"Var({self.name!r})"
+from .facts import Fact
+from .optimizer import optimize_query, time_fact_execution
+from .rules import apply_targeted_rules, get_rules
+from .variables import Var
 
 
 def query(*fact_patterns: Fact, hydrate: bool = True) -> Iterator[dict[str, Any]]:
     """
-    Query facts from the database and apply inference rules.
+    Query facts from the database and apply inference rules with intelligent optimization.
+
+    This function automatically:
+    1. Propagates constraints across variables with the same name
+    2. Orders query execution by selectivity (most selective predicates first)
+    3. Leverages database indexes and query optimization
+    4. Records performance timing for optimization analysis
 
     Args:
         *fact_patterns: One or more fact patterns to match as a conjunction
@@ -34,70 +31,176 @@ def query(*fact_patterns: Fact, hydrate: bool = True) -> Iterator[dict[str, Any]
 
     Yields:
         Dictionary mapping variable names to their values (models or PKs based on hydrate)
-    """
-    # Get all available facts (both stored and inferred)
-    all_facts = _get_all_facts_with_inference()
 
-    # Get the conjunction results using both stored and inferred facts
-    pk_results = _satisfy_conjunction_with_facts(list(fact_patterns), {}, all_facts)
+    Example:
+        # Query with automatic optimization and performance tracking
+        results = query(
+            ColleaguesOf(Var("emp1"), Var("emp2", where=Q(department="Engineering"))),
+            WorksFor(Var("emp1"), Var("company", where=Q(is_active=True))),
+            WorksFor(Var("emp2"), Var("company"))
+        )
+        # Constraints are automatically propagated:
+        # - emp2 gets Q(department="Engineering") in all predicates
+        # - company gets Q(is_active=True) in all predicates
+        # - Query execution is ordered by selectivity
+        # - Performance timing is automatically recorded
+    """
+    # Apply query optimization (constraint propagation + execution planning)
+    optimized_patterns = optimize_query(list(fact_patterns))
+
+    # Get the conjunction results using query-specific fact loading
+    pk_results = _satisfy_conjunction_with_targeted_facts(optimized_patterns, {})
 
     if hydrate:
         # Collect all results first to batch hydration
         pk_results_list = list(pk_results)
-        # Hydrate PKs to model instances
+        # Hydrate PKs to model instances (use original patterns for type info)
         yield from _hydrate_results(pk_results_list, list(fact_patterns))
     else:
         # Return PKs directly without hydration
         yield from pk_results
 
 
-def _get_all_facts_with_inference() -> list[Fact]:
-    """Get all facts including both stored facts and inferred facts from rules."""
-    from django_datalog.rules import apply_rules
+def _satisfy_conjunction_with_targeted_facts(conditions, bindings) -> Iterator[dict[str, Any]]:
+    """Satisfy a conjunction using targeted fact loading - only load facts relevant to the query."""
+    if not conditions:
+        yield bindings
+        return
 
-    # Get all stored facts from the database
-    stored_facts = _get_all_stored_facts()
+    condition = conditions[0]
+    remaining = conditions[1:]
 
-    # Apply inference rules to derive new facts
-    all_facts = apply_rules(stored_facts)
+    # Get facts relevant to this specific condition (stored + inferred)
+    relevant_facts = _get_facts_for_pattern(condition)
 
-    return all_facts
+    # Query against the targeted fact set
+    for result in _query_against_facts(condition, relevant_facts):
+        new_bindings = _unify_bindings(bindings, result)
+        if new_bindings is not None:
+            yield from _satisfy_conjunction_with_targeted_facts(remaining, new_bindings)
 
 
-def _get_all_stored_facts() -> list[Fact]:
-    """Get all facts currently stored in the database."""
-    from django_datalog.rules import get_rules
+def _get_facts_for_pattern(pattern: Fact) -> list[Fact]:
+    """Get facts relevant to a specific pattern - both stored and inferred."""
+    # 1. Load stored facts that match this pattern type
+    stored_facts = _load_stored_facts_for_pattern(pattern)
 
-    stored_facts = []
-
-    # Get all fact types used in rules to know what to load
-    fact_types = set()
+    # 2. Find rules that could generate facts of this pattern type
+    relevant_rules = []
     for rule in get_rules():
-        fact_types.add(type(rule.head))
+        if type(rule.head) is type(pattern):
+            relevant_rules.append(rule)
+
+    # 3. If no rules can generate this fact type, just return stored facts
+    if not relevant_rules:
+        return stored_facts
+
+    # 4. Apply targeted rule inference using hidden variables
+    inferred_facts = _apply_rules_with_hidden_variables(relevant_rules, pattern)
+
+    # 5. Combine stored and inferred facts
+    return stored_facts + inferred_facts
+
+
+def _load_stored_facts_for_pattern(pattern: Fact) -> list[Fact]:
+    """Load stored facts from database that match a specific fact pattern."""
+    try:
+        fact_class = type(pattern)
+        django_model = fact_class._django_model
+
+        # Convert fact pattern to Django query
+        query_params, q_objects = _fact_to_django_query(pattern)
+
+        # Build the queryset with both filter params and Q objects
+        queryset = django_model.objects.select_related("subject", "object").filter(**query_params)
+        for q_obj in q_objects:
+            queryset = queryset.filter(q_obj)
+
+        # Convert Django instances back to facts
+        facts = []
+        for instance in queryset:
+            fact = fact_class(subject=instance.subject, object=instance.object)
+            facts.append(fact)
+
+        return facts
+
+    except (AttributeError, Exception):
+        # If fact doesn't have a Django model or query fails, return empty
+        return []
+
+
+def _apply_rules_with_hidden_variables(rules, target_pattern: Fact) -> list[Fact]:
+    """Apply rules using hidden variables to avoid bulk loading - reuse existing rule system."""
+    # Create a targeted fact base by loading only facts needed for these specific rules
+    targeted_facts = _build_targeted_fact_base_for_rules(rules, target_pattern)
+
+    # Apply existing rule system to the targeted fact base
+    inferred_facts = apply_targeted_rules(rules, targeted_facts)
+
+    # Filter to only return facts of the target pattern type
+    target_type = type(target_pattern)
+    return [fact for fact in inferred_facts if type(fact) is target_type]
+
+
+def _build_targeted_fact_base_for_rules(rules, target_pattern: Fact) -> list[Fact]:
+    """Build a targeted fact base using hidden variables to avoid bulk loading."""
+    targeted_facts = []
+
+    # For each rule, analyze what facts it needs and load them with constraints
+    for rule in rules:
         for condition in rule.body:
-            fact_types.add(type(condition))
+            # Create a version of the condition with hidden variables for unbound variables
+            targeted_condition = _create_targeted_condition(condition, target_pattern)
 
-    # Load facts of all relevant types from the database
-    for fact_type in fact_types:
-        try:
-            django_model = fact_type._django_model
-            # Get subject and object type from fact type annotations
-            subject_type, object_type = _get_fact_field_types(fact_type)
+            # Load facts for this targeted condition (uses existing optimized loading)
+            condition_facts = _load_stored_facts_for_pattern(targeted_condition)
+            targeted_facts.extend(condition_facts)
 
-            # Load facts using select_related for efficient loading
-            for row in django_model.objects.select_related("subject", "object").all():
-                try:
-                    # Access the related Django model instances directly
-                    fact = fact_type(subject=row.subject, object=row.object)
-                    stored_facts.append(fact)
-                except Exception:
-                    # Skip facts that can't be loaded
-                    continue
-        except Exception:
-            # Skip fact types that can't be loaded
-            continue
+    # Remove duplicates
+    seen = set()
+    unique_facts = []
+    for fact in targeted_facts:
+        fact_key = (type(fact), fact.subject, fact.object)
+        if fact_key not in seen:
+            seen.add(fact_key)
+            unique_facts.append(fact)
 
-    return stored_facts
+    return unique_facts
+
+
+def _create_targeted_condition(condition: Fact, target_pattern: Fact) -> Fact:
+    """Create a targeted version of a rule condition with hidden variables for unbound vars."""
+    condition_class = type(condition)
+
+    # For unbound variables in the condition, create hidden variables
+    # This allows the existing system to handle them as unconstrained queries
+    new_subject = condition.subject
+    new_object = condition.object
+
+    if isinstance(condition.subject, Var):
+        # Check if this variable appears in the target pattern
+        if not _variable_in_pattern(condition.subject.name, target_pattern):
+            # Create hidden variable - unconstrained but with unique name
+            hidden_name = f"hidden_{uuid.uuid4().hex[:8]}"
+            new_subject = Var(hidden_name)
+
+    if isinstance(condition.object, Var):
+        # Check if this variable appears in the target pattern
+        if not _variable_in_pattern(condition.object.name, target_pattern):
+            # Create hidden variable - unconstrained but with unique name
+            hidden_name = f"hidden_{uuid.uuid4().hex[:8]}"
+            new_object = Var(hidden_name)
+
+    return condition_class(subject=new_subject, object=new_object)
+
+
+def _variable_in_pattern(var_name: str, pattern: Fact) -> bool:
+    """Check if a variable name appears in a fact pattern."""
+    if isinstance(pattern.subject, Var) and pattern.subject.name == var_name:
+        return True
+    if isinstance(pattern.object, Var) and pattern.object.name == var_name:
+        return True
+    return False
 
 
 def _get_fact_field_types(fact_type):
@@ -108,7 +211,6 @@ def _get_fact_field_types(fact_type):
         return cache.get("subject"), cache.get("object")
 
     # Fallback: extract from type annotations
-    from dataclasses import fields
 
     fact_fields = fields(fact_type)
     subject_field = next((f for f in fact_fields if f.name == "subject"), None)
@@ -139,35 +241,21 @@ def _extract_model_type_from_annotation(type_annotation):
     return None
 
 
-def _satisfy_conjunction_with_facts(
-    conditions, bindings, all_facts: list[Fact]
-) -> Iterator[dict[str, Any]]:
-    """Satisfy a conjunction of conditions using the combined set of stored and inferred facts."""
-    if not conditions:
-        yield bindings
-        return
-
-    # Take the first condition
-    condition = conditions[0]
-    remaining = conditions[1:]
-
-    # Query against the complete set of facts (stored + inferred) to avoid duplication
-    for result in _query_against_facts(condition, all_facts):
-        new_bindings = _unify_bindings(bindings, result)
-        if new_bindings is not None:
-            yield from _satisfy_conjunction_with_facts(remaining, new_bindings, all_facts)
-
-
 def _query_against_facts(pattern: Fact, facts: list[Fact]) -> Iterator[dict[str, Any]]:
-    """Query a pattern against a set of in-memory facts."""
-    pattern_type = type(pattern)
+    """Query a pattern against a set of in-memory facts with timing feedback."""
+    with time_fact_execution(pattern):
+        pattern_type = type(pattern)
+        results = []
 
-    for fact in facts:
-        if type(fact) is pattern_type:
-            # Try to unify the pattern with this fact
-            substitution = _unify_fact_pattern(pattern, fact)
-            if substitution is not None:
-                yield substitution
+        for fact in facts:
+            if type(fact) is pattern_type:
+                # Try to unify the pattern with this fact
+                substitution = _unify_fact_pattern(pattern, fact)
+                if substitution is not None:
+                    results.append(substitution)
+
+        # Yield all results
+        yield from results
 
 
 def _unify_fact_pattern(pattern: Fact, concrete_fact: Fact) -> dict[str, Any] | None:
@@ -230,8 +318,7 @@ def _satisfy_conjunction(conditions, bindings) -> Iterator[dict[str, Any]]:
         return
 
     # Take the first condition
-    condition = conditions[0]
-    remaining = conditions[1:]
+    condition, *remaining = conditions
 
     # Generate all possible solutions for this condition
     for result in _query_single_fact(condition):
@@ -243,23 +330,24 @@ def _satisfy_conjunction(conditions, bindings) -> Iterator[dict[str, Any]]:
 
 
 def _query_single_fact(fact_pattern: Fact) -> Iterator[dict[str, Any]]:
-    """Query a single fact pattern from the database."""
-    # Get the Django model for this fact type
-    fact_class = type(fact_pattern)
-    django_model = fact_class._django_model
+    """Query a single fact pattern from the database with timing feedback."""
+    with time_fact_execution(fact_pattern):
+        # Get the Django model for this fact type
+        fact_class = type(fact_pattern)
+        django_model = fact_class._django_model
 
-    # Convert fact pattern to Django query
-    query_params, q_objects = _fact_to_django_query(fact_pattern)
+        # Convert fact pattern to Django query
+        query_params, q_objects = _fact_to_django_query(fact_pattern)
 
-    # Build the queryset with both filter params and Q objects
-    queryset = django_model.objects.filter(**query_params)
-    for q_obj in q_objects:
-        queryset = queryset.filter(q_obj)
+        # Build the queryset with both filter params and Q objects
+        queryset = django_model.objects.filter(**query_params)
+        for q_obj in q_objects:
+            queryset = queryset.filter(q_obj)
 
-    # Query the database with values() to get PKs
-    for values_dict in queryset.values("subject", "object"):
-        substitution = _django_result_to_substitution(fact_pattern, values_dict)
-        yield substitution
+        # Query the database with values() to get PKs
+        for values_dict in queryset.values("subject", "object"):
+            substitution = _django_result_to_substitution(fact_pattern, values_dict)
+            yield substitution
 
 
 def _fact_to_django_query(fact: Fact) -> tuple[dict[str, Any], list[Any]]:

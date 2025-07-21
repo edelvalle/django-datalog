@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from typing import Any
 
 from django_datalog.facts import Fact
+from django_datalog.optimizer import ConstraintPropagator
+from django_datalog.variables import Var
 
 
 @dataclass
@@ -26,7 +28,11 @@ _rules: list[Rule] = []
 
 def rule(head: Fact, *body) -> None:
     """
-    Define an inference rule.
+    Define an inference rule with automatic constraint propagation.
+
+    Constraints on variables in the rule head are automatically propagated to
+    all predicates in the rule body that use the same variable names. Multiple
+    constraints on the same variable are combined using logical AND.
 
     Args:
         head: The fact that can be inferred
@@ -38,8 +44,28 @@ def rule(head: Fact, *body) -> None:
             ParentOf(Var("grandparent"), Var("parent")),
             ParentOf(Var("parent"), Var("grandchild"))
         )
+
+    Example with constraint propagation:
+        rule(
+            ManagerOf(Var("mgr", where=Q(is_manager=True)), Var("emp")),
+            WorksFor(Var("mgr"), Var("company")),  # mgr gets Q(is_manager=True)
+            WorksFor(Var("emp"), Var("company"))   # emp gets no constraints
+        )
     """
-    new_rule = Rule(head=head, body=list(body))
+    # Apply constraint propagation to the rule
+    propagator = ConstraintPropagator()
+
+    # Combine head and body into a single list for constraint analysis
+    all_patterns = [head] + list(body)
+
+    # Propagate constraints across variables with the same name
+    optimized_patterns = propagator.propagate_constraints(all_patterns)
+
+    # Split back into head and body
+    optimized_head = optimized_patterns[0]
+    optimized_body = optimized_patterns[1:]
+
+    new_rule = Rule(head=optimized_head, body=optimized_body)
     _rules.append(new_rule)
 
 
@@ -68,6 +94,37 @@ def apply_rules(base_facts: list[Fact]) -> list[Fact]:
         iterations += 1
 
         for rule_obj in _rules:
+            # Try to apply this rule
+            new_facts = _apply_single_rule(rule_obj, all_facts)
+            for new_fact in new_facts:
+                if new_fact not in all_facts:
+                    all_facts.append(new_fact)
+                    changed = True
+
+    return all_facts
+
+
+def apply_targeted_rules(target_rules: list, base_facts: list[Fact]) -> list[Fact]:
+    """
+    Apply only specific rules to derive new facts from base facts.
+
+    Args:
+        target_rules: List of specific rules to apply
+        base_facts: Set of known facts
+
+    Returns:
+        Set of all facts (base + inferred from target rules only)
+    """
+    all_facts = base_facts[:]
+    changed = True
+    max_iterations = 100  # Prevent infinite loops
+    iterations = 0
+
+    while changed and iterations < max_iterations:
+        changed = False
+        iterations += 1
+
+        for rule_obj in target_rules:
             # Try to apply this rule
             new_facts = _apply_single_rule(rule_obj, all_facts)
             for new_fact in new_facts:
@@ -148,8 +205,6 @@ def _find_bindings_for_condition(condition: Any, known_facts: list[Fact]) -> lis
 
 def _unify_facts(pattern_fact: Fact, concrete_fact: Fact) -> dict[str, Any] | None:
     """Unify a pattern fact (with variables) against a concrete fact."""
-    from django_datalog.query import Var
-
     bindings = {}
 
     # Check subject
@@ -187,8 +242,6 @@ def _merge_bindings(binding1: dict[str, Any], binding2: dict[str, Any]) -> dict[
 
 def _instantiate_fact(pattern_fact: Fact, bindings: dict[str, Any]) -> Fact | None:
     """Create a concrete fact by substituting variables with their bindings."""
-    from django_datalog.query import Var
-
     # Substitute subject
     if isinstance(pattern_fact.subject, Var):
         if pattern_fact.subject.name not in bindings:

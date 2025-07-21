@@ -3,7 +3,7 @@ Fact system for djdatalog - handles fact definitions, storage, and retrieval.
 """
 
 from dataclasses import dataclass
-from typing import Any, ClassVar
+from typing import Any, ClassVar, get_type_hints
 
 import uuid6
 from django.db import models
@@ -60,9 +60,6 @@ class Fact:
     def _create_django_model(cls):
         """Dynamically create a Django model for this fact type."""
         import sys
-        from typing import get_type_hints
-
-        from django.db import models
 
         # Generate model name
         model_name = f"{cls.__name__}Storage"

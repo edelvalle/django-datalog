@@ -139,7 +139,7 @@ class DjdatalogIntegrationTest(TransactionTestCase):
         store_facts(*facts_to_store)
 
         # Query should be efficient - limit database queries
-        with self.assertNumQueries(16):  # Current performance (before PK hydration optimization)
+        with self.assertNumQueries(6):  # Improved performance with targeted fact loading
             results = list(query(WorksFor(Var("employee"), self.tech_corp)))
             # Access related data to test for N+1 issues
             for result in results:

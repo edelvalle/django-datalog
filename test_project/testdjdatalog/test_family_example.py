@@ -53,10 +53,9 @@ class FamilyExampleTests(TestCase):
         self.assertEqual(field2, "object__city")
         self.assertEqual(value2, "New York")
 
-    @patch("django_datalog.query._get_all_facts_with_inference")
-    @patch("django_datalog.query._satisfy_conjunction_with_facts")
+    @patch("django_datalog.query._satisfy_conjunction_with_targeted_facts")
     @patch("django_datalog.query._hydrate_results")
-    def test_family_query_hydration(self, mock_hydrate, mock_satisfy, mock_get_facts):
+    def test_family_query_hydration(self, mock_hydrate, mock_satisfy):
         """Test query hydration using family relationship example."""
         # Mock a ParentOf fact
         mock_fact = Mock()
@@ -65,7 +64,6 @@ class FamilyExampleTests(TestCase):
 
         # Setup mocks
         mock_pk_results = [{"subject": 1, "object": 2}]  # John -> Alice
-        mock_get_facts.return_value = []  # Empty fact list for simplicity
         # Return a new iterator each time the function is called
         mock_satisfy.side_effect = lambda *args, **kwargs: iter(mock_pk_results)
         mock_hydrate.return_value = iter(
