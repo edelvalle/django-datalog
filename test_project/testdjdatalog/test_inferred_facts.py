@@ -5,9 +5,9 @@ Test inferred facts functionality - facts that are computed via rules only.
 from dataclasses import dataclass
 
 from django.test import TestCase
-from testdjdatalog.models import Person, PersonWorksFor
 
 from django_datalog.models import Fact, Var, query, rule, store_facts
+from testdjdatalog.models import Person, PersonWorksFor
 
 
 @dataclass
@@ -73,71 +73,6 @@ class InferredFactsTests(TestCase):
             (self.charlie, self.bob),
         }  # Child has access to parent
         self.assertEqual(user_target_pairs, expected_pairs)
-
-    def test_vessel_access_pattern_with_disjunctive_rules(self):
-        """Test the vessel access pattern using the new disjunctive rule syntax."""
-
-        @dataclass
-        class VesselShoreStaff(Fact):
-            subject: Person | Var
-            object: Person | Var  # Using Person as vessel for simplicity
-
-        @dataclass
-        class VesselCrew(Fact):
-            subject: Person | Var
-            object: Person | Var
-
-        @dataclass
-        class CompanyMember(Fact):
-            subject: Person | Var
-            object: Person | Var  # Person as company
-
-        @dataclass
-        class CompanyOwns(Fact):
-            subject: Person | Var  # Company
-            object: Person | Var  # Vessel
-
-        # Define the vessel access rule with multiple alternatives:
-        # HasDirectAccess(user, vessel) :-
-        #   VesselShoreStaff(user, vessel) OR
-        #   VesselCrew(user, vessel) OR
-        #   [CompanyMember(user, company) AND CompanyOwns(company, vessel)]
-        rule(
-            HasDirectAccess(Var("user"), Var("vessel")),
-            VesselShoreStaff(Var("user"), Var("vessel"))  # Alternative 1: Direct shore staff
-            | VesselCrew(Var("user"), Var("vessel"))  # Alternative 2: Direct crew
-            | (
-                CompanyMember(Var("user"), Var("company"))  # Alternative 3: Company membership
-                & CompanyOwns(Var("company"), Var("vessel"))
-            ),
-        )
-
-        # Store base facts
-        store_facts(
-            VesselShoreStaff(subject=self.alice, object=self.bob),  # Alice is shore staff of Bob
-            VesselCrew(subject=self.charlie, object=self.bob),  # Charlie is crew of Bob
-            CompanyMember(
-                subject=self.alice, object=self.charlie
-            ),  # Alice is member of Charlie's company
-            CompanyOwns(subject=self.charlie, object=self.alice),  # Charlie's company owns Alice
-        )
-
-        # Query inferred facts
-        results = list(query(HasDirectAccess(Var("user"), Var("vessel"))))
-
-        # Should have 3 HasDirectAccess facts:
-        # - Alice->Bob (shore staff)
-        # - Charlie->Bob (crew)
-        # - Alice->Alice (company member with access to owned vessel)
-        self.assertEqual(len(results), 3)
-
-        user_vessel_pairs = {(r["user"], r["vessel"]) for r in results}
-        expected_pairs = {
-            (self.alice, self.bob),  # Shore staff
-            (self.charlie, self.bob),  # Crew
-            (self.alice, self.alice),  # Company member
-        }
-        self.assertEqual(user_vessel_pairs, expected_pairs)
 
     def test_basic_query_without_rules(self):
         """Test that inferred facts return empty when no rules are defined."""

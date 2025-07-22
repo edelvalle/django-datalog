@@ -6,7 +6,6 @@ from django.db.models import Q
 from django.test import TestCase
 
 from django_datalog.models import Var, query, retract_facts, store_facts
-from django_datalog.rules import _rules
 
 from .models import (
     Company,
@@ -32,7 +31,6 @@ class FactsAndRulesTests(TestCase):
 
         # Create company
         self.company = Company.objects.create(name="ACME Corp", active=True)
-
 
     def test_basic_fact_storage_and_retrieval(self):
         """Test storing and retrieving facts."""

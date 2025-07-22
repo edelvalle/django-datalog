@@ -48,8 +48,8 @@ def rule(head: Fact, body: Fact | list[Fact | FactConjunction] | FactConjunction
 
         # Conjunctive conditions (AND) using tuple
         rule(
-            HasAccess(Var("user"), Var("vessel")),
-            (MemberOf(Var("user"), Var("company")), Owns(Var("company"), Var("vessel")))
+            HasAccess(Var("user"), Var("resource")),
+            (MemberOf(Var("user"), Var("company")), Owns(Var("company"), Var("resource")))
         )
 
         # Disjunctive alternatives (OR) using list
@@ -72,12 +72,12 @@ def rule(head: Fact, body: Fact | list[Fact | FactConjunction] | FactConjunction
         )
 
         rule(
-            HasAccess(Var("user"), Var("vessel")),
-            MemberOf(Var("user"), Var("company")) & Owns(Var("company"), Var("vessel"))
+            HasAccess(Var("user"), Var("resource")),
+            MemberOf(Var("user"), Var("company")) & Owns(Var("company"), Var("resource"))
         )
     """
     # Verify that the head fact is marked as inferred=True
-    if not getattr(type(head), '_is_inferred', False):
+    if not getattr(type(head), "_is_inferred", False):
         raise TypeError(
             f"Rule head fact {type(head).__name__} must be marked with inferred=True. "
             f"Only inferred facts can be the head of inference rules."
@@ -88,7 +88,8 @@ def rule(head: Fact, body: Fact | list[Fact | FactConjunction] | FactConjunction
             _create_single_rule(head, [body])
 
         case FactConjunction() | tuple():
-            # FactConjunction or tuple represents conjunction (AND) - create one rule with multiple conditions
+            # FactConjunction or tuple represents conjunction (AND)
+            # - create one rule with multiple conditions
             _create_single_rule(head, list(body))
 
         case list():
@@ -332,7 +333,7 @@ def rule_context(func=None):
             rule(TeamMates(Var("emp1"), Var("emp2")),
                  (MemberOf(Var("emp1"), Var("dept")),
                   MemberOf(Var("emp2"), Var("dept"))))
-            
+
             # Rules are active here
             teammates = query(TeamMates(Var("emp1"), Var("emp2")))
 
@@ -344,10 +345,9 @@ def rule_context(func=None):
             rule(TeamMates(Var("emp1"), Var("emp2")),
                  (MemberOf(Var("emp1"), Var("dept")),
                   MemberOf(Var("emp2"), Var("dept"))))
-            
+
             # Test logic here...
     """
-    from contextlib import contextmanager
     from functools import wraps
 
     @contextmanager
@@ -370,4 +370,5 @@ def rule_context(func=None):
         def wrapper(*args, **kwargs):
             with _context():
                 return func(*args, **kwargs)
+
         return wrapper

@@ -27,7 +27,7 @@ rule(
     (
         ParentOf(Var("grandparent"), Var("parent")),
         ParentOf(Var("parent"), Var("grandchild")),
-    )
+    ),
 )
 
 # Note: This sibling rule currently allows self-siblings (person being sibling of themselves)
@@ -39,7 +39,7 @@ rule(
     (
         ParentOf(Var("parent"), Var("person1")),
         ParentOf(Var("parent"), Var("person2")),
-    )
+    ),
 )
 
 # Work relationship rules (Person-based for internal tests)
@@ -49,7 +49,7 @@ rule(
     (
         PersonWorksFor(Var("person1"), Var("company")),
         PersonWorksFor(Var("person2"), Var("company")),
-    )
+    ),
 )
 
 # Work relationship rules (Employee-based for real application)
@@ -59,7 +59,7 @@ rule(
     (
         WorksFor(Var("emp1"), Var("company")),
         WorksFor(Var("emp2"), Var("company")),
-    )
+    ),
 )
 
 rule(
@@ -68,7 +68,7 @@ rule(
     (
         MemberOf(Var("emp1"), Var("department")),
         MemberOf(Var("emp2"), Var("department")),
-    )
+    ),
 )
 
 rule(
@@ -77,5 +77,5 @@ rule(
     (
         WorksOn(Var("emp1"), Var("project")),
         WorksOn(Var("emp2"), Var("project")),
-    )
+    ),
 )

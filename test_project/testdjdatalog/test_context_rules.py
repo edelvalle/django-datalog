@@ -105,7 +105,7 @@ class ContextRulesTests(TestCase):
                 (
                     MemberOf(Var("emp1"), Var("dept")),
                     MemberOf(Var("emp2"), Var("dept")),
-                )
+                ),
             )
 
             # Rules should be active here
@@ -140,7 +140,7 @@ class ContextRulesTests(TestCase):
             (
                 WorksFor(Var("emp1"), Var("company")),
                 WorksFor(Var("emp2"), Var("company")),
-            )
+            ),
         )
         colleagues = list(query(ColleaguesOf(Var("emp1"), Var("emp2"))))
 
@@ -182,7 +182,7 @@ class ContextRulesTests(TestCase):
             (
                 MemberOf(Var("emp1"), Var("dept")),
                 MemberOf(Var("emp2"), Var("dept")),
-            )
+            ),
         )
 
         # Rule 2: Colleagues based on company
@@ -191,7 +191,7 @@ class ContextRulesTests(TestCase):
             (
                 WorksFor(Var("emp1"), Var("company")),
                 WorksFor(Var("emp2"), Var("company")),
-            )
+            ),
         )
 
         # Both rules should be active
@@ -210,7 +210,7 @@ class ContextRulesTests(TestCase):
                 (
                     WorksFor(Var("emp1"), Var("company")),
                     WorksFor(Var("emp2"), Var("company")),
-                )
+                ),
             )
 
             # Should have colleagues here
@@ -227,7 +227,7 @@ class ContextRulesTests(TestCase):
                     (
                         MemberOf(Var("emp1"), Var("dept")),
                         MemberOf(Var("emp2"), Var("dept")),
-                    )
+                    ),
                 )
 
                 # Should have both colleagues (from outer) and test teammates (from inner)
@@ -263,7 +263,7 @@ class ContextRulesTests(TestCase):
                 (
                     MemberOf(Var("emp1"), Var("dept")),
                     MemberOf(Var("emp2"), Var("dept")),
-                )
+                ),
             )
 
             # Both global colleagues and context test teammates should work

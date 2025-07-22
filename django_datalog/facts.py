@@ -14,15 +14,15 @@ from django.db import models
 class FactConjunction(tuple):
     """
     A specialized tuple for representing conjunctive (AND) fact combinations.
-    
+
     This provides better type safety and pattern matching than raw tuples
     while maintaining all tuple functionality for backward compatibility.
     """
-    
+
     def __new__(cls, facts):
         """Create a new FactConjunction from a sequence of facts."""
         return super().__new__(cls, facts)
-    
+
     def __repr__(self):
         if len(self) == 0:
             return "FactConjunction()"
@@ -30,11 +30,11 @@ class FactConjunction(tuple):
             return f"{self[0]}"
         else:
             return " & ".join(str(fact) for fact in self)
-    
+
     def __or__(self, other) -> list:
         """Implement | operator for FactConjunction | other."""
         from django_datalog.facts import Fact  # Avoid circular import
-        
+
         match other:
             case Fact():
                 return [self, other]
@@ -46,11 +46,11 @@ class FactConjunction(tuple):
                 raise TypeError(
                     f"Cannot use | operator between FactConjunction and {type(other).__name__}."
                 )
-    
+
     def __and__(self, other) -> FactConjunction:
         """Implement & operator for FactConjunction & other."""
         from django_datalog.facts import Fact  # Avoid circular import
-        
+
         match other:
             case Fact():
                 return FactConjunction(list(self) + [other])
@@ -58,17 +58,18 @@ class FactConjunction(tuple):
                 return FactConjunction(list(self) + list(other))
             case list():
                 raise TypeError(
-                    "Cannot use & operator between FactConjunction and list. Lists represent disjunction (OR)."
+                    "Cannot use & operator between FactConjunction and list. "
+                    "Lists represent disjunction (OR)."
                 )
             case _:
                 raise TypeError(
                     f"Cannot use & operator between FactConjunction and {type(other).__name__}."
                 )
-    
+
     def __ror__(self, other) -> list:
         """Implement right-side | operator for other | FactConjunction."""
         from django_datalog.facts import Fact  # Avoid circular import
-        
+
         match other:
             case Fact():
                 return [other, self]
@@ -80,11 +81,11 @@ class FactConjunction(tuple):
                 raise TypeError(
                     f"Cannot use | operator between {type(other).__name__} and FactConjunction."
                 )
-    
+
     def __rand__(self, other) -> FactConjunction:
         """Implement right-side & operator for other & FactConjunction."""
         from django_datalog.facts import Fact  # Avoid circular import
-        
+
         match other:
             case Fact():
                 return FactConjunction([other] + list(self))
@@ -92,7 +93,8 @@ class FactConjunction(tuple):
                 return FactConjunction(list(other) + list(self))
             case list():
                 raise TypeError(
-                    "Cannot use & operator between list and FactConjunction. Lists represent disjunction (OR)."
+                    "Cannot use & operator between list and FactConjunction. "
+                    "Lists represent disjunction (OR)."
                 )
             case _:
                 raise TypeError(
@@ -211,7 +213,9 @@ class Fact:
 
         return subject_key == other_subject_key and object_key == other_object_key
 
-    def __or__(self, other: Self | list[Self | FactConjunction] | FactConjunction) -> list[Self | FactConjunction]:
+    def __or__(
+        self, other: Self | list[Self | FactConjunction] | FactConjunction
+    ) -> list[Self | FactConjunction]:
         """Implement | operator for disjunction (OR logic)."""
         match other:
             case Fact():
@@ -221,9 +225,7 @@ class Fact:
             case tuple() | FactConjunction():
                 return [self, other]
             case _:
-                raise TypeError(
-                    "Cannot use | operator between Fact and unsupported type."
-                )
+                raise TypeError("Cannot use | operator between Fact and unsupported type.")
 
     def __and__(self, other: Self | FactConjunction) -> FactConjunction:
         """Implement & operator for conjunction (AND logic)."""
@@ -237,9 +239,7 @@ class Fact:
                     "Cannot use & operator between Fact and list. Lists represent disjunction (OR)."
                 )
             case _:
-                raise TypeError(
-                    "Cannot use & operator between Fact and unsupported type."
-                )
+                raise TypeError("Cannot use & operator between Fact and unsupported type.")
 
     def __ror__(
         self, other: list[Self | FactConjunction] | FactConjunction
@@ -251,9 +251,7 @@ class Fact:
             case tuple() | FactConjunction():
                 return [other, self]
             case _:
-                raise TypeError(
-                    f"Cannot use | operator between {type(other).__name__} and Fact."
-                )
+                raise TypeError(f"Cannot use | operator between {type(other).__name__} and Fact.")
 
     def __rand__(self, other: FactConjunction) -> FactConjunction:
         """Implement right-side & operator for (Fact1, Fact2) & Fact3."""
@@ -265,9 +263,7 @@ class Fact:
                     "Cannot use & operator between list and Fact. Lists represent disjunction (OR)."
                 )
             case _:
-                raise TypeError(
-                    "Cannot use & operator between unsupported type and Fact."
-                )
+                raise TypeError("Cannot use & operator between unsupported type and Fact.")
 
 
 def store_facts(*facts: Fact) -> None:

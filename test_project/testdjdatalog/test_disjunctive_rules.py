@@ -35,12 +35,13 @@ from dataclasses import dataclass
 from django.test import TestCase
 
 from django_datalog.models import Fact, Var, query, rule, rule_context, store_facts
-from testdjdatalog.models import IsAdmin, IsManager, ManagerOf, MemberOf, ParentOf, Person, WorksFor
+from testdjdatalog.models import IsAdmin, IsManager, ParentOf, Person
 
 
 @dataclass
 class HasAuthority(Fact, inferred=True):
     """Person has authority over another person (inferred-only)."""
+
     subject: Person | Var
     object: Person | Var
 
@@ -48,6 +49,7 @@ class HasAuthority(Fact, inferred=True):
 @dataclass
 class CanEdit(Fact, inferred=True):
     """Person can edit another person's data (inferred-only)."""
+
     subject: Person | Var
     object: Person | Var
 
@@ -63,7 +65,6 @@ class DisjunctiveRulesTests(TestCase):
         self.charlie = Person.objects.create(name="Charlie")
         self.diana = Person.objects.create(name="Diana")
 
-
     @rule_context
     def test_simple_disjunctive_rule(self):
         """Test a simple disjunctive rule with two alternatives."""
@@ -72,14 +73,14 @@ class DisjunctiveRulesTests(TestCase):
             HasAuthority(Var("user"), Var("target")),
             [
                 IsManager(Var("user"), Var("target")),  # Alternative 1: Manager relationship
-                IsAdmin(Var("user"), Var("target"))     # Alternative 2: Admin relationship
-            ]
+                IsAdmin(Var("user"), Var("target")),  # Alternative 2: Admin relationship
+            ],
         )
 
         # Store base facts
         store_facts(
-            IsManager(subject=self.alice, object=self.bob),    # Alice manages Bob
-            IsAdmin(subject=self.charlie, object=self.diana)   # Charlie is admin of Diana
+            IsManager(subject=self.alice, object=self.bob),  # Alice manages Bob
+            IsAdmin(subject=self.charlie, object=self.diana),  # Charlie is admin of Diana
         )
 
         # Query inferred facts
@@ -101,19 +102,19 @@ class DisjunctiveRulesTests(TestCase):
         rule(
             CanEdit(Var("user"), Var("target")),
             [
-                IsAdmin(Var("user"), Var("target")),               # Alternative 1: Admin
-                (                                                  # Alternative 2: Manager AND Parent
+                IsAdmin(Var("user"), Var("target")),  # Alternative 1: Admin
+                (  # Alternative 2: Manager AND Parent
                     IsManager(Var("user"), Var("target")),
-                    ParentOf(Var("user"), Var("target"))
-                )
-            ]
+                    ParentOf(Var("user"), Var("target")),
+                ),
+            ],
         )
 
         # Store base facts
         store_facts(
-            IsAdmin(subject=self.alice, object=self.bob),      # Alice is admin of Bob
-            IsManager(subject=self.charlie, object=self.diana), # Charlie manages Diana
-            ParentOf(subject=self.charlie, object=self.diana)  # Charlie is parent of Diana
+            IsAdmin(subject=self.alice, object=self.bob),  # Alice is admin of Bob
+            IsManager(subject=self.charlie, object=self.diana),  # Charlie manages Diana
+            ParentOf(subject=self.charlie, object=self.diana),  # Charlie is parent of Diana
         )
 
         # Query inferred facts
@@ -126,8 +127,8 @@ class DisjunctiveRulesTests(TestCase):
 
         user_target_pairs = {(r["user"], r["target"]) for r in results}
         expected_pairs = {
-            (self.alice, self.bob),      # From IsAdmin
-            (self.charlie, self.diana)   # From IsManager AND ParentOf
+            (self.alice, self.bob),  # From IsAdmin
+            (self.charlie, self.diana),  # From IsManager AND ParentOf
         }
         self.assertEqual(user_target_pairs, expected_pairs)
 
@@ -140,23 +141,23 @@ class DisjunctiveRulesTests(TestCase):
         rule(
             HasAuthority(Var("user"), Var("target")),
             [
-                (                                                  # Alternative 1
+                (  # Alternative 1
                     IsManager(Var("user"), Var("target")),
-                    IsAdmin(Var("user"), Var("target"))
+                    IsAdmin(Var("user"), Var("target")),
                 ),
-                (                                                  # Alternative 2
+                (  # Alternative 2
                     ParentOf(Var("user"), Var("target")),
-                    IsManager(Var("user"), Var("other"))  # User must be manager of someone
-                )
-            ]
+                    IsManager(Var("user"), Var("other")),  # User must be manager of someone
+                ),
+            ],
         )
 
         # Store base facts
         store_facts(
-            IsManager(subject=self.alice, object=self.bob),    # Alice manages Bob
-            IsAdmin(subject=self.alice, object=self.bob),      # Alice is admin of Bob
-            ParentOf(subject=self.charlie, object=self.diana), # Charlie is parent of Diana
-            IsManager(subject=self.charlie, object=self.alice) # Charlie manages Alice
+            IsManager(subject=self.alice, object=self.bob),  # Alice manages Bob
+            IsAdmin(subject=self.alice, object=self.bob),  # Alice is admin of Bob
+            ParentOf(subject=self.charlie, object=self.diana),  # Charlie is parent of Diana
+            IsManager(subject=self.charlie, object=self.alice),  # Charlie manages Alice
         )
 
         # Query inferred facts
@@ -169,7 +170,7 @@ class DisjunctiveRulesTests(TestCase):
 
         user_target_pairs = {(r["user"], r["target"]) for r in results}
         expected_pairs = {
-            (self.alice, self.bob),      # Manager AND Admin
-            (self.charlie, self.diana)   # Parent AND Manager of other
+            (self.alice, self.bob),  # Manager AND Admin
+            (self.charlie, self.diana),  # Parent AND Manager of other
         }
         self.assertEqual(user_target_pairs, expected_pairs)

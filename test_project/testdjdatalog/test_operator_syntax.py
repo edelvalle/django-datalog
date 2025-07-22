@@ -13,6 +13,7 @@ from testdjdatalog.models import Person
 @dataclass
 class IsOwner(Fact, inferred=True):
     """Owner relationship for operator tests."""
+
     subject: Person | Var
     object: Person | Var  # Using Person as resource for simplicity
 
@@ -20,6 +21,7 @@ class IsOwner(Fact, inferred=True):
 @dataclass
 class IsAdmin(Fact, inferred=True):
     """Admin relationship for operator tests."""
+
     subject: Person | Var
     object: Person | Var
 
@@ -27,6 +29,7 @@ class IsAdmin(Fact, inferred=True):
 @dataclass
 class MemberOf(Fact, inferred=True):
     """Team membership for operator tests."""
+
     subject: Person | Var
     object: Person | Var  # Person as team
 
@@ -34,13 +37,15 @@ class MemberOf(Fact, inferred=True):
 @dataclass
 class TeamOwns(Fact, inferred=True):
     """Team ownership for operator tests."""
+
     subject: Person | Var  # Team
-    object: Person | Var   # Resource
+    object: Person | Var  # Resource
 
 
 @dataclass
 class HasAccess(Fact, inferred=True):
     """User has access to a resource (inferred fact for operator tests)."""
+
     subject: Person | Var
     object: Person | Var
 
@@ -146,22 +151,23 @@ class OperatorSyntaxTests(TestCase):
         # Rule using | operator: HasAccess if person is parent OR grandparent
         rule(
             HasAccess(Var("user"), Var("resource")),
-            ParentOf(Var("user"), Var("resource")) | ParentOf(Var("resource"), Var("user"))
+            ParentOf(Var("user"), Var("resource")) | ParentOf(Var("resource"), Var("user")),
         )
 
         # Rule using & operator: HasAccess if both are people (using ParentOf in both directions)
         # This is a bit contrived but shows the & operator working
         rule(
             HasAccess(Var("user"), Var("resource")),
-            ParentOf(Var("user"), Var("intermediate")) & ParentOf(Var("intermediate"), Var("resource"))
+            ParentOf(Var("user"), Var("intermediate"))
+            & ParentOf(Var("intermediate"), Var("resource")),
         )
 
         # Store facts using Person as both parent and child for simplicity
         store_facts(
-            ParentOf(subject=self.alice, object=self.document),      # Alice parent of document
-            ParentOf(subject=self.document, object=self.bob),        # Document parent of Bob
-            ParentOf(subject=self.charlie, object=self.alice),       # Charlie parent of Alice
-            ParentOf(subject=self.alice, object=self.bob)            # Alice parent of Bob (creates grandparent)
+            ParentOf(subject=self.alice, object=self.document),  # Alice parent of document
+            ParentOf(subject=self.document, object=self.bob),  # Document parent of Bob
+            ParentOf(subject=self.charlie, object=self.alice),  # Charlie parent of Alice
+            ParentOf(subject=self.alice, object=self.bob),  # Alice parent of Bob
         )
 
         # Query for access
