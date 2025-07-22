@@ -7,55 +7,70 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added
-- **Inferred Facts**: New `inferred=True` parameter for Fact classes that creates facts computed exclusively via rules without Django model storage
-- **Disjunctive Rules**: Enhanced rule syntax supporting OR alternatives and AND conjunctions within alternatives
-- **Operator Syntax**: New `|` (OR) and `&` (AND) operators for Facts to create intuitive rule expressions
+## [0.3.0] - 2025-07-22
 
-### Features
-- **Inferred Facts (`inferred=True`)**: Facts marked as `inferred=True` are never stored in the database but are computed automatically via inference rules
-- **No Storage Operations**: Inferred facts cannot be stored or retracted - they exist only as computed conclusions
-- **No Django Model**: Inferred facts don't generate Django models, saving database tables and migrations
-- **Always Up-to-Date**: Inferred facts are recomputed on every query, ensuring they reflect current rule logic
-- **Disjunctive Rule Syntax**: Rules now support OR alternatives using list syntax  
-- **Conjunctive Rules**: Tuples within rule bodies represent AND conditions
-- **Operator Support**: `|` creates lists (OR), `&` creates tuples (AND) for intuitive rule building
-- **Match-Case Syntax**: Modern Python pattern matching in rule processing
+### 🚀 Major Features Added
 
-### Syntax
-- `Fact(inferred=True)` creates computation-only facts with no database storage
-- `rule(Head, Body)` where Body can be:
-  - Single Fact: simple rule
-  - Tuple of Facts: conjunction (AND)  
-  - List of Facts/Tuples: disjunction (OR)
-- Operator syntax: `Fact1 | Fact2` creates `[Fact1, Fact2]`, `Fact1 & Fact2` creates `(Fact1, Fact2)`
-- Constraint propagation works across all alternatives and conjunctions
+#### **Fact Operators**
+- **New `|` (OR) and `&` (AND) operators** for Facts to create intuitive rule expressions
+- `Fact1 | Fact2` creates `[Fact1, Fact2]` (disjunction)  
+- `Fact1 & Fact2` creates `(Fact1, Fact2)` (conjunction)
+- Support for complex expressions like `(Fact1 & Fact2) | Fact3`
 
-### Examples
+#### **Enhanced Rule System**
+- **Disjunctive Rules**: Rules now support OR alternatives using list syntax
+- **Modern Syntax**: Updated rule processing with match-case pattern matching
+- **FactConjunction**: New tuple subclass for better type safety
+- **Future Annotations**: Full support for `from __future__ import annotations`
+
+#### **Rule Context Management**
+- **Dual-mode `rule_context`**: Works as both context manager and decorator
+- Context Manager: `with rule_context(): ...`
+- Decorator: `@rule_context` for test methods
+- **Perfect Test Isolation**: Rules defined in context don't leak to other tests
+
+#### **Inferred Facts**
+- **`inferred=True` parameter**: Facts computed exclusively via rules without Django model storage
+- **No Database Storage**: Inferred facts exist only as computed conclusions
+- **Always Up-to-Date**: Recomputed on every query to reflect current rule logic
+- **Zero Migrations**: No Django models or database tables created
+
+### 🛠️ Technical Improvements
+- **Validation**: Rules now validate that inferred facts can only be rule heads
+- **Error Handling**: Better TypeErrors for invalid operator combinations
+- **Test Suite**: 60+ tests with comprehensive coverage of new features
+- **Performance**: Optimized rule processing with modern Python features
+
+### 📚 Documentation
+- **Compact README**: Streamlined documentation focusing on core concepts
+- **Modern Examples**: All examples use new operator syntax
+- **Complete Migration Guide**: Shows both new and legacy syntax
+
+### 🔄 Breaking Changes
+- **Removed vessel-related tests**: Simplified test suite
+- **Updated rule signature**: Enhanced to support new syntax patterns
+
+### 💡 Usage Examples
 ```python
-@dataclass
+# Inferred facts - no database storage
 class HasAccess(Fact, inferred=True):
     subject: User | Var
     object: Resource | Var
 
-# Disjunctive rule with multiple alternatives
+# Modern operator syntax (recommended)
 rule(
     HasAccess(Var("user"), Var("resource")),
-    [
-        IsOwner(Var("user"), Var("resource")),           # Alternative 1
-        IsManager(Var("user"), Var("resource")),         # Alternative 2  
-        (                                                # Alternative 3 (conjunction)
-            MemberOf(Var("user"), Var("team")),
-            TeamOwns(Var("team"), Var("resource"))
-        )
-    ]
+    IsOwner(Var("user"), Var("resource")) | 
+    IsManager(Var("user"), Var("resource")) |
+    (MemberOf(Var("user"), Var("team")) & TeamOwns(Var("team"), Var("resource")))
 )
 
-# Using operator syntax
-rule(
-    HasAccess(Var("user"), Var("resource")),
-    IsOwner(Var("user"), Var("resource")) | IsManager(Var("user"), Var("resource"))
-)
+# Rule context for testing
+@rule_context
+def test_access_control(self):
+    rule(CanEdit(Var("user")), IsAdmin(Var("user")))
+    results = query(CanEdit(admin_user))
+    assert len(results) == 1
 ```
 
 ## [0.2.0] - 2025-01-21
