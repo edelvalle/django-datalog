@@ -70,8 +70,10 @@ class ConstraintPropagator:
         """Collect all constraints for each variable name."""
         constraints_by_var = defaultdict(list)
 
+        print(">>", fact_patterns)
         for fact_pattern in fact_patterns:
             # Extract variables from subject and object
+            print(">>>", fact_pattern)
             variables = self._extract_variables(fact_pattern)
             for var in variables:
                 if var.where is not None:
@@ -425,7 +427,7 @@ class QueryPlanner:
             except ValueError:
                 pass  # Key not in order queue
 
-    def get_cache_info(self) -> dict[str, int]:
+    def get_cache_info(self) -> dict[str, int | float]:
         """Get cache statistics for monitoring."""
         return {
             "cache_size": len(self.selectivity_cache),

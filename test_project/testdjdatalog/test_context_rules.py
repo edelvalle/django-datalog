@@ -19,7 +19,7 @@ from .models import (
 )
 
 
-class TestContextTeammates(Fact):
+class TestContextTeammates(Fact, inferred=True):
     """Test-specific fact that won't conflict with global rules."""
 
     subject: Employee | Var  # Employee 1
@@ -102,8 +102,10 @@ class ContextRulesTests(TestCase):
         with rule_context():
             rule(
                 TestContextTeammates(Var("emp1"), Var("emp2")),
-                MemberOf(Var("emp1"), Var("dept")),
-                MemberOf(Var("emp2"), Var("dept")),
+                (
+                    MemberOf(Var("emp1"), Var("dept")),
+                    MemberOf(Var("emp2"), Var("dept")),
+                )
             )
 
             # Rules should be active here
@@ -129,70 +131,75 @@ class ContextRulesTests(TestCase):
         final_rule_count = len(get_rules())
         self.assertEqual(initial_rule_count, final_rule_count)
 
+    @rule_context
     def test_context_rules_with_arguments(self):
-        """Test context manager with rules passed as arguments."""
-        with rule_context(
-            # Rule passed as tuple: (head, body1, body2, ...)
+        """Test context manager with rules defined inside."""
+        # Define rule inside context using new syntax
+        rule(
+            ColleaguesOf(Var("emp1"), Var("emp2")),
             (
-                ColleaguesOf(Var("emp1"), Var("emp2")),
                 WorksFor(Var("emp1"), Var("company")),
                 WorksFor(Var("emp2"), Var("company")),
             )
-        ):
-            colleagues = list(query(ColleaguesOf(Var("emp1"), Var("emp2"))))
+        )
+        colleagues = list(query(ColleaguesOf(Var("emp1"), Var("emp2"))))
 
-            # Should find Alice and Bob as colleagues (same company)
-            colleague_names = set()
-            for result in colleagues:
-                emp1_name = result["emp1"].person.name if result["emp1"].person else "Unknown"
-                emp2_name = result["emp2"].person.name if result["emp2"].person else "Unknown"
-                colleague_names.add(emp1_name)
-                colleague_names.add(emp2_name)
+        # Should find Alice and Bob as colleagues (same company)
+        colleague_names = set()
+        for result in colleagues:
+            emp1_name = result["emp1"].person.name if result["emp1"].person else "Unknown"
+            emp2_name = result["emp2"].person.name if result["emp2"].person else "Unknown"
+            colleague_names.add(emp1_name)
+            colleague_names.add(emp2_name)
 
-            self.assertIn("Alice", colleague_names)
-            self.assertIn("Bob", colleague_names)
+        self.assertIn("Alice", colleague_names)
+        self.assertIn("Bob", colleague_names)
 
-            # Charlie works at a different company, so shouldn't be colleagues with Alice/Bob
-            alice_charlie_colleagues = any(
-                (
-                    result["emp1"].person
-                    and result["emp1"].person.name == "Alice"
-                    and result["emp2"].person
-                    and result["emp2"].person.name == "Charlie"
-                )
-                or (
-                    result["emp1"].person
-                    and result["emp1"].person.name == "Charlie"
-                    and result["emp2"].person
-                    and result["emp2"].person.name == "Alice"
-                )
-                for result in colleagues
+        # Charlie works at a different company, so shouldn't be colleagues with Alice/Bob
+        alice_charlie_colleagues = any(
+            (
+                result["emp1"].person
+                and result["emp1"].person.name == "Alice"
+                and result["emp2"].person
+                and result["emp2"].person.name == "Charlie"
             )
-            self.assertFalse(alice_charlie_colleagues)
+            or (
+                result["emp1"].person
+                and result["emp1"].person.name == "Charlie"
+                and result["emp2"].person
+                and result["emp2"].person.name == "Alice"
+            )
+            for result in colleagues
+        )
+        self.assertFalse(alice_charlie_colleagues)
 
+    @rule_context
     def test_multiple_context_rules(self):
         """Test multiple rules in the same context."""
-        with rule_context():
-            # Rule 1: Teammates based on department
-            rule(
-                TeamMates(Var("emp1"), Var("emp2")),
+        # Rule 1: Teammates based on department
+        rule(
+            TeamMates(Var("emp1"), Var("emp2")),
+            (
                 MemberOf(Var("emp1"), Var("dept")),
                 MemberOf(Var("emp2"), Var("dept")),
             )
+        )
 
-            # Rule 2: Colleagues based on company
-            rule(
-                ColleaguesOf(Var("emp1"), Var("emp2")),
+        # Rule 2: Colleagues based on company
+        rule(
+            ColleaguesOf(Var("emp1"), Var("emp2")),
+            (
                 WorksFor(Var("emp1"), Var("company")),
                 WorksFor(Var("emp2"), Var("company")),
             )
+        )
 
-            # Both rules should be active
-            teammates = list(query(TeamMates(Var("emp1"), Var("emp2"))))
-            colleagues = list(query(ColleaguesOf(Var("emp1"), Var("emp2"))))
+        # Both rules should be active
+        teammates = list(query(TeamMates(Var("emp1"), Var("emp2"))))
+        colleagues = list(query(ColleaguesOf(Var("emp1"), Var("emp2"))))
 
-            self.assertGreater(len(teammates), 0)
-            self.assertGreater(len(colleagues), 0)
+        self.assertGreater(len(teammates), 0)
+        self.assertGreater(len(colleagues), 0)
 
     def test_nested_rule_contexts(self):
         """Test nested rule contexts."""
@@ -200,8 +207,10 @@ class ContextRulesTests(TestCase):
             # Outer context rule
             rule(
                 ColleaguesOf(Var("emp1"), Var("emp2")),
-                WorksFor(Var("emp1"), Var("company")),
-                WorksFor(Var("emp2"), Var("company")),
+                (
+                    WorksFor(Var("emp1"), Var("company")),
+                    WorksFor(Var("emp2"), Var("company")),
+                )
             )
 
             # Should have colleagues here
@@ -215,8 +224,10 @@ class ContextRulesTests(TestCase):
                 # Inner context rule
                 rule(
                     TestContextTeammates(Var("emp1"), Var("emp2")),
-                    MemberOf(Var("emp1"), Var("dept")),
-                    MemberOf(Var("emp2"), Var("dept")),
+                    (
+                        MemberOf(Var("emp1"), Var("dept")),
+                        MemberOf(Var("emp2"), Var("dept")),
+                    )
                 )
 
                 # Should have both colleagues (from outer) and test teammates (from inner)
@@ -249,8 +260,10 @@ class ContextRulesTests(TestCase):
             # Add temporary rule for test teammates
             rule(
                 TestContextTeammates(Var("emp1"), Var("emp2")),
-                MemberOf(Var("emp1"), Var("dept")),
-                MemberOf(Var("emp2"), Var("dept")),
+                (
+                    MemberOf(Var("emp1"), Var("dept")),
+                    MemberOf(Var("emp2"), Var("dept")),
+                )
             )
 
             # Both global colleagues and context test teammates should work

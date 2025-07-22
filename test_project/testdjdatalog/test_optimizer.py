@@ -335,8 +335,7 @@ class TestOptimizerIntegration(TestCase):
         # Define rule with constraint in head - constraint should propagate to body
         rule(
             ColleaguesOf(Var("emp1", where=Q(is_manager=True)), Var("emp2")),
-            WorksFor(Var("emp1"), Var("company")),  # Should get is_manager constraint
-            WorksFor(Var("emp2"), Var("company")),
+            WorksFor(Var("emp1"), Var("company")) & WorksFor(Var("emp2"), Var("company")),
         )
 
         # Query the inferred facts - but note that current inference engine

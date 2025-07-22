@@ -7,6 +7,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Inferred Facts**: New `inferred=True` parameter for Fact classes that creates facts computed exclusively via rules without Django model storage
+- **Disjunctive Rules**: Enhanced rule syntax supporting OR alternatives and AND conjunctions within alternatives
+- **Operator Syntax**: New `|` (OR) and `&` (AND) operators for Facts to create intuitive rule expressions
+
+### Features
+- **Inferred Facts (`inferred=True`)**: Facts marked as `inferred=True` are never stored in the database but are computed automatically via inference rules
+- **No Storage Operations**: Inferred facts cannot be stored or retracted - they exist only as computed conclusions
+- **No Django Model**: Inferred facts don't generate Django models, saving database tables and migrations
+- **Always Up-to-Date**: Inferred facts are recomputed on every query, ensuring they reflect current rule logic
+- **Disjunctive Rule Syntax**: Rules now support OR alternatives using list syntax  
+- **Conjunctive Rules**: Tuples within rule bodies represent AND conditions
+- **Operator Support**: `|` creates lists (OR), `&` creates tuples (AND) for intuitive rule building
+- **Match-Case Syntax**: Modern Python pattern matching in rule processing
+
+### Syntax
+- `Fact(inferred=True)` creates computation-only facts with no database storage
+- `rule(Head, Body)` where Body can be:
+  - Single Fact: simple rule
+  - Tuple of Facts: conjunction (AND)  
+  - List of Facts/Tuples: disjunction (OR)
+- Operator syntax: `Fact1 | Fact2` creates `[Fact1, Fact2]`, `Fact1 & Fact2` creates `(Fact1, Fact2)`
+- Constraint propagation works across all alternatives and conjunctions
+
+### Examples
+```python
+@dataclass
+class HasAccess(Fact, inferred=True):
+    subject: User | Var
+    object: Resource | Var
+
+# Disjunctive rule with multiple alternatives
+rule(
+    HasAccess(Var("user"), Var("resource")),
+    [
+        IsOwner(Var("user"), Var("resource")),           # Alternative 1
+        IsManager(Var("user"), Var("resource")),         # Alternative 2  
+        (                                                # Alternative 3 (conjunction)
+            MemberOf(Var("user"), Var("team")),
+            TeamOwns(Var("team"), Var("resource"))
+        )
+    ]
+)
+
+# Using operator syntax
+rule(
+    HasAccess(Var("user"), Var("resource")),
+    IsOwner(Var("user"), Var("resource")) | IsManager(Var("user"), Var("resource"))
+)
+```
+
 ## [0.2.0] - 2025-01-21
 
 ### Added

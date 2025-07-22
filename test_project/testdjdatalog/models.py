@@ -123,14 +123,14 @@ class MarriedTo(Fact):
     object: Person | Var  # Spouse 2
 
 
-class GrandparentOf(Fact):
+class GrandparentOf(Fact, inferred=True):
     """Person is grandparent of another person (inferred)."""
 
     subject: Person | Var  # Grandparent
     object: Person | Var  # Grandchild
 
 
-class SiblingOf(Fact):
+class SiblingOf(Fact, inferred=True):
     """Person is sibling of another person."""
 
     subject: Person | Var  # Sibling 1
@@ -172,28 +172,28 @@ class WorksOn(Fact):
     object: Project | Var  # Project
 
 
-class PersonColleaguesOf(Fact):
+class PersonColleaguesOf(Fact, inferred=True):
     """Two people are colleagues (work at same company) - for internal tests."""
 
     subject: Person | Var  # Person 1
     object: Person | Var  # Person 2
 
 
-class ColleaguesOf(Fact):
+class ColleaguesOf(Fact, inferred=True):
     """Two employees are colleagues (work at same company)."""
 
     subject: Employee | Var  # Employee 1
     object: Employee | Var  # Employee 2
 
 
-class TeamMates(Fact):
+class TeamMates(Fact, inferred=True):
     """Two employees are teammates (work in same department)."""
 
     subject: Employee | Var  # Employee 1
     object: Employee | Var  # Employee 2
 
 
-class ProjectColleagues(Fact):
+class ProjectColleagues(Fact, inferred=True):
     """Two employees are project colleagues (work on same project)."""
 
     subject: Employee | Var  # Employee 1
@@ -212,3 +212,17 @@ class HasAuthority(Fact):
 
     subject: Employee | Var  # Employee
     object: Department | Project | Var  # Department or Project
+
+
+class IsManager(Fact):
+    """Person is a manager of another person."""
+
+    subject: Person | Var
+    object: Person | Var
+
+
+class IsAdmin(Fact):
+    """Person is an admin of another person."""
+
+    subject: Person | Var
+    object: Person | Var

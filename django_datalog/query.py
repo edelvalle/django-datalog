@@ -106,6 +106,11 @@ def _load_stored_facts_for_pattern(pattern: Fact) -> list[Fact]:
     """Load stored facts from database that match a specific fact pattern."""
     try:
         fact_class = type(pattern)
+
+        # Skip loading for inferred facts - they have no storage
+        if fact_class._is_inferred:
+            return []
+
         django_model = fact_class._django_model
 
         # Convert fact pattern to Django query
@@ -332,8 +337,16 @@ def _satisfy_conjunction(conditions, bindings) -> Iterator[dict[str, Any]]:
 def _query_single_fact(fact_pattern: Fact) -> Iterator[dict[str, Any]]:
     """Query a single fact pattern from the database with timing feedback."""
     with time_fact_execution(fact_pattern):
-        # Get the Django model for this fact type
         fact_class = type(fact_pattern)
+
+        # Handle inferred facts - they must be computed via rules
+        if fact_class._is_inferred:
+            # For inferred facts, get all facts (stored + inferred) and query against them
+            relevant_facts = _get_facts_for_pattern(fact_pattern)
+            yield from _query_against_facts(fact_pattern, relevant_facts)
+            return
+
+        # Handle stored facts - query database directly
         django_model = fact_class._django_model
 
         # Convert fact pattern to Django query

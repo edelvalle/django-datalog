@@ -4,8 +4,8 @@ help: ## Show this help message
 	@echo "Test project development commands:"
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
 
-test: ## Run Django tests
-	uv run python manage.py test testdjdatalog -v 2
+test: ## Run Django tests (use ARGS="test.class.method" to specify specific tests)
+	PYTHONPATH=.. uv run python manage.py test $(or $(ARGS),testdjdatalog) -v 2
 
 lint: ## Run linting tools (ruff, basedpyright)
 	uv run --project .. ruff check testdjdatalog/

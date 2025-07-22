@@ -2,11 +2,13 @@
 Rule system for djdatalog - handles inference rules and rule evaluation.
 """
 
+from __future__ import annotations
+
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any
 
-from django_datalog.facts import Fact
+from django_datalog.facts import Fact, FactConjunction
 from django_datalog.optimizer import ConstraintPropagator
 from django_datalog.variables import Var
 
@@ -26,37 +28,94 @@ class Rule:
 _rules: list[Rule] = []
 
 
-def rule(head: Fact, *body) -> None:
+def rule(head: Fact, body: Fact | list[Fact | FactConjunction] | FactConjunction) -> None:
     """
-    Define an inference rule with automatic constraint propagation.
-
-    Constraints on variables in the rule head are automatically propagated to
-    all predicates in the rule body that use the same variable names. Multiple
-    constraints on the same variable are combined using logical AND.
+    Define inference rules with automatic constraint propagation and support for | and & operators.
 
     Args:
-        head: The fact that can be inferred
-        *body: Conditions that must be true (supports nested lists for OR conditions)
+        head: The fact that can be inferred (must be marked with inferred=True)
+        body: The rule body. Can be:
+              - A single Fact (one condition)
+              - A tuple[Fact, ...] (conjunctive conditions - AND)
+              - A list[Fact | tuple[Fact, ...]] (disjunctive alternatives - OR)
 
-    Example:
+    Raises:
+        TypeError: If the head fact is not marked with inferred=True
+
+    Examples:
+        # Single fact condition
+        rule(HasAccess(Var("user"), Var("resource")), IsOwner(Var("user"), Var("resource")))
+
+        # Conjunctive conditions (AND) using tuple
         rule(
-            GrandparentOf(Var("grandparent"), Var("grandchild")),
-            ParentOf(Var("grandparent"), Var("parent")),
-            ParentOf(Var("parent"), Var("grandchild"))
+            HasAccess(Var("user"), Var("vessel")),
+            (MemberOf(Var("user"), Var("company")), Owns(Var("company"), Var("vessel")))
         )
 
-    Example with constraint propagation:
+        # Disjunctive alternatives (OR) using list
         rule(
-            ManagerOf(Var("mgr", where=Q(is_manager=True)), Var("emp")),
-            WorksFor(Var("mgr"), Var("company")),  # mgr gets Q(is_manager=True)
-            WorksFor(Var("emp"), Var("company"))   # emp gets no constraints
+            HasAccess(Var("user"), Var("resource")),
+            [
+                IsOwner(Var("user"), Var("resource")),                    # Alternative 1
+                IsAdmin(Var("user"), Var("resource")),                    # Alternative 2
+                (  # Alternative 3 (conjunction)
+                    MemberOf(Var("user"), Var("team")),
+                    TeamOwns(Var("team"), Var("resource"))
+                )
+            ]
+        )
+
+        # Using operators (generates the same structures as above):
+        rule(
+            HasAccess(Var("user"), Var("resource")),
+            IsOwner(Var("user"), Var("resource")) | IsAdmin(Var("user"), Var("resource"))
+        )
+
+        rule(
+            HasAccess(Var("user"), Var("vessel")),
+            MemberOf(Var("user"), Var("company")) & Owns(Var("company"), Var("vessel"))
         )
     """
-    # Apply constraint propagation to the rule
+    # Verify that the head fact is marked as inferred=True
+    if not getattr(type(head), '_is_inferred', False):
+        raise TypeError(
+            f"Rule head fact {type(head).__name__} must be marked with inferred=True. "
+            f"Only inferred facts can be the head of inference rules."
+        )
+    match body:
+        case Fact():
+            # Single fact - create one rule with one condition
+            _create_single_rule(head, [body])
+
+        case FactConjunction() | tuple():
+            # FactConjunction or tuple represents conjunction (AND) - create one rule with multiple conditions
+            _create_single_rule(head, list(body))
+
+        case list():
+            # List represents disjunction (OR) - create separate rules for each alternative
+            for alternative in body:
+                match alternative:
+                    case Fact():
+                        # Single fact alternative
+                        _create_single_rule(head, [alternative])
+                    case FactConjunction() | tuple():
+                        # FactConjunction or tuple alternative (conjunction within disjunction)
+                        _create_single_rule(head, list(alternative))
+                    case _:
+                        # Handle other types gracefully - treat as single fact
+                        _create_single_rule(head, [alternative])
+        case _:
+            # Handle other types gracefully - treat as single fact
+            _create_single_rule(head, [body])
+
+
+def _create_single_rule(head: Fact, body: list[Fact]) -> None:
+    """Create a single Rule object with constraint propagation."""
+    # Apply constraint propagation for this specific rule
     propagator = ConstraintPropagator()
 
-    # Combine head and body into a single list for constraint analysis
-    all_patterns = [head] + list(body)
+    # Combine head and body for constraint analysis
+    all_patterns = [head] + body
 
     # Propagate constraints across variables with the same name
     optimized_patterns = propagator.propagate_constraints(all_patterns)
@@ -65,6 +124,7 @@ def rule(head: Fact, *body) -> None:
     optimized_head = optimized_patterns[0]
     optimized_body = optimized_patterns[1:]
 
+    # Create and register the rule
     new_rule = Rule(head=optimized_head, body=optimized_body)
     _rules.append(new_rule)
 
@@ -263,48 +323,51 @@ def _instantiate_fact(pattern_fact: Fact, bindings: dict[str, Any]) -> Fact | No
     return fact_class(subject=subject, object=obj)
 
 
-@contextmanager
-def rule_context(*rule_definitions):
+def rule_context(func=None):
     """
-    Context manager for temporary rules that are only active within the context.
+    Context manager/decorator for temporary rules that are only active within the context.
 
-    Args:
-        *rule_definitions: Optional rule definitions as tuples of (head, *body)
-
-    Usage:
-        # Context manager with rules defined inside
+    Usage as context manager:
         with rule_context():
             rule(TeamMates(Var("emp1"), Var("emp2")),
-                 MemberOf(Var("emp1"), Var("dept")),
-                 MemberOf(Var("emp2"), Var("dept")))
-
+                 (MemberOf(Var("emp1"), Var("dept")),
+                  MemberOf(Var("emp2"), Var("dept"))))
+            
             # Rules are active here
             teammates = query(TeamMates(Var("emp1"), Var("emp2")))
 
         # Rules are no longer active here
 
-        # Context manager with rules passed as arguments
-        with rule_context(
-            (TeamMates(Var("emp1"), Var("emp2")),
-             MemberOf(Var("emp1"), Var("dept")),
-             MemberOf(Var("emp2"), Var("dept")))
-        ):
-            # Rules are active here
-            teammates = query(TeamMates(Var("emp1"), Var("emp2")))
+    Usage as decorator:
+        @rule_context
+        def test_some_rule(self):
+            rule(TeamMates(Var("emp1"), Var("emp2")),
+                 (MemberOf(Var("emp1"), Var("dept")),
+                  MemberOf(Var("emp2"), Var("dept"))))
+            
+            # Test logic here...
     """
-    # Save the current global rules
-    original_rules = _rules.copy()
+    from contextlib import contextmanager
+    from functools import wraps
 
-    # Add any rules passed as arguments
-    for rule_def in rule_definitions:
-        if isinstance(rule_def, tuple | list) and len(rule_def) >= 2:
-            head = rule_def[0]
-            body = rule_def[1:]
-            rule(head, *body)
+    @contextmanager
+    def _context():
+        # Save the current global rules
+        original_rules = _rules.copy()
+        try:
+            yield
+        finally:
+            # Restore the original global rules
+            _rules.clear()
+            _rules.extend(original_rules)
 
-    try:
-        yield
-    finally:
-        # Restore the original global rules
-        _rules.clear()
-        _rules.extend(original_rules)
+    if func is None:
+        # Called as context manager: rule_context()
+        return _context()
+    else:
+        # Called as decorator: @rule_context
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            with _context():
+                return func(*args, **kwargs)
+        return wrapper
