@@ -70,10 +70,8 @@ class ConstraintPropagator:
         """Collect all constraints for each variable name."""
         constraints_by_var = defaultdict(list)
 
-        print(">>", fact_patterns)
         for fact_pattern in fact_patterns:
             # Extract variables from subject and object
-            print(">>>", fact_pattern)
             variables = self._extract_variables(fact_pattern)
             for var in variables:
                 if var.where is not None:
