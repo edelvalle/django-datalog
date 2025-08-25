@@ -12,7 +12,7 @@ from django.db.models import Q
 from .facts import Fact
 from .optimizer import optimize_query, time_fact_execution
 from .rules import apply_targeted_rules, get_rules
-from .variables import Var
+from .variables import Var, has_variable_references, substitute_variables_in_q
 
 
 def query(*fact_patterns: Fact, hydrate: bool = True) -> Iterator[dict[str, Any]]:
@@ -61,10 +61,15 @@ def query(*fact_patterns: Fact, hydrate: bool = True) -> Iterator[dict[str, Any]
         yield from pk_results
 
 
-def _satisfy_conjunction_with_targeted_facts(conditions, bindings) -> Iterator[dict[str, Any]]:
+def _satisfy_conjunction_with_targeted_facts(conditions, bindings, original_conditions=None) -> Iterator[dict[str, Any]]:
     """Satisfy a conjunction using targeted fact loading - only load facts relevant to the query."""
+    if original_conditions is None:
+        original_conditions = conditions[:]
+        
     if not conditions:
-        yield bindings
+        # All conditions satisfied - now validate cross-variable constraints
+        if _validate_cross_variable_constraints(original_conditions, bindings):
+            yield bindings
         return
 
     condition = conditions[0]
@@ -72,12 +77,13 @@ def _satisfy_conjunction_with_targeted_facts(conditions, bindings) -> Iterator[d
 
     # Get facts relevant to this specific condition (stored + inferred)
     relevant_facts = _get_facts_for_pattern(condition)
+    
 
-    # Query against the targeted fact set
-    for result in _query_against_facts(condition, relevant_facts):
+    # Query against the targeted fact set (skip cross-variable constraint checking during unification)
+    for result in _query_against_facts(condition, relevant_facts, bindings, skip_cross_var_constraints=True):
         new_bindings = _unify_bindings(bindings, result)
         if new_bindings is not None:
-            yield from _satisfy_conjunction_with_targeted_facts(remaining, new_bindings)
+            yield from _satisfy_conjunction_with_targeted_facts(remaining, new_bindings, original_conditions)
 
 
 def _get_facts_for_pattern(pattern: Fact) -> list[Fact]:
@@ -246,8 +252,11 @@ def _extract_model_type_from_annotation(type_annotation):
     return None
 
 
-def _query_against_facts(pattern: Fact, facts: list[Fact]) -> Iterator[dict[str, Any]]:
+def _query_against_facts(pattern: Fact, facts: list[Fact], existing_bindings: dict[str, Any] = None, skip_cross_var_constraints: bool = False) -> Iterator[dict[str, Any]]:
     """Query a pattern against a set of in-memory facts with timing feedback."""
+    if existing_bindings is None:
+        existing_bindings = {}
+        
     with time_fact_execution(pattern):
         pattern_type = type(pattern)
         results = []
@@ -255,7 +264,7 @@ def _query_against_facts(pattern: Fact, facts: list[Fact]) -> Iterator[dict[str,
         for fact in facts:
             if type(fact) is pattern_type:
                 # Try to unify the pattern with this fact
-                substitution = _unify_fact_pattern(pattern, fact)
+                substitution = _unify_fact_pattern(pattern, fact, existing_bindings, skip_cross_var_constraints)
                 if substitution is not None:
                     results.append(substitution)
 
@@ -263,15 +272,24 @@ def _query_against_facts(pattern: Fact, facts: list[Fact]) -> Iterator[dict[str,
         yield from results
 
 
-def _unify_fact_pattern(pattern: Fact, concrete_fact: Fact) -> dict[str, Any] | None:
+def _unify_fact_pattern(pattern: Fact, concrete_fact: Fact, existing_bindings: dict[str, Any] = None, skip_cross_var_constraints: bool = False) -> dict[str, Any] | None:
     """Unify a fact pattern (with variables) against a concrete fact."""
+    if existing_bindings is None:
+        existing_bindings = {}
+    
+    
     substitution = {}
 
     # Check subject
     if isinstance(pattern.subject, Var):
         # Check if subject meets the variable's constraints
         if pattern.subject.where is not None:
-            if not _check_q_constraint(concrete_fact.subject, pattern.subject.where):
+            # Skip cross-variable constraint checking if requested
+            if skip_cross_var_constraints and has_variable_references(pattern.subject.where):
+                pass  # Skip constraint checking
+            elif not _check_q_constraint_with_bindings(
+                concrete_fact.subject, pattern.subject.where, existing_bindings
+            ):
                 return None  # Subject doesn't meet constraints
 
         substitution[pattern.subject.name] = (
@@ -286,8 +304,17 @@ def _unify_fact_pattern(pattern: Fact, concrete_fact: Fact) -> dict[str, Any] | 
     if isinstance(pattern.object, Var):
         # Check if object meets the variable's constraints
         if pattern.object.where is not None:
-            if not _check_q_constraint(concrete_fact.object, pattern.object.where):
-                return None  # Object doesn't meet constraints
+            # Skip cross-variable constraint checking if requested
+            if skip_cross_var_constraints and has_variable_references(pattern.object.where):
+                pass  # Skip constraint checking
+            else:
+                # Combine existing bindings with new substitutions for constraint checking
+                combined_bindings = {**existing_bindings, **substitution}
+                constraint_result = _check_q_constraint_with_bindings(
+                    concrete_fact.object, pattern.object.where, combined_bindings
+                )
+                if not constraint_result:
+                    return None  # Object doesn't meet constraints
 
         var_name = pattern.object.name
         obj_value = (
@@ -303,14 +330,112 @@ def _unify_fact_pattern(pattern: Fact, concrete_fact: Fact) -> dict[str, Any] | 
     return substitution
 
 
+def _validate_cross_variable_constraints(conditions: list[Fact], bindings: dict[str, Any]) -> bool:
+    """Validate all cross-variable constraints after full conjunction is satisfied."""
+    # Collect all patterns with cross-variable constraints
+    patterns_with_cross_var_constraints = []
+    
+    for condition in conditions:
+        if isinstance(condition.subject, Var) and condition.subject.where and has_variable_references(condition.subject.where):
+            patterns_with_cross_var_constraints.append((condition, 'subject'))
+        if isinstance(condition.object, Var) and condition.object.where and has_variable_references(condition.object.where):
+            patterns_with_cross_var_constraints.append((condition, 'object'))
+    
+    # If no cross-variable constraints, validation passes
+    if not patterns_with_cross_var_constraints:
+        return True
+    
+    # For each cross-variable constraint, check if it's satisfied
+    for pattern, field_type in patterns_with_cross_var_constraints:
+        if field_type == 'subject':
+            var = pattern.subject
+            # Find the actual model instance for this variable
+            if var.name in bindings:
+                # Get the model type from the pattern's field annotation
+                model_type = _extract_model_type_from_annotation(
+                    pattern.__dataclass_fields__['subject'].type
+                )
+                # Get the model instance from bindings (might need hydration)  
+                model_instance = _get_model_instance_from_binding(bindings[var.name], model_type)
+                if not _check_q_constraint_with_bindings(model_instance, var.where, bindings):
+                    return False
+        elif field_type == 'object':
+            var = pattern.object
+            # Find the actual model instance for this variable
+            if var.name in bindings:
+                # Get the model type from the pattern's field annotation
+                model_type = _extract_model_type_from_annotation(
+                    pattern.__dataclass_fields__['object'].type
+                )
+                # Get the model instance from bindings (might need hydration)
+                model_instance = _get_model_instance_from_binding(bindings[var.name], model_type)
+                if not _check_q_constraint_with_bindings(model_instance, var.where, bindings):
+                    return False
+    
+    return True
+
+
+def _get_model_instance_from_binding(binding_value, model_type):
+    """Get model instance from binding value, handling both PKs and model instances."""
+    if hasattr(binding_value, 'pk'):
+        # Already a model instance
+        return binding_value
+    else:
+        # This is a PK - hydrate to model instance
+        if model_type:
+            try:
+                return model_type.objects.get(pk=binding_value)
+            except (model_type.DoesNotExist, Exception):
+                # If hydration fails, return the PK value
+                return binding_value
+        else:
+            # No model type info - return the PK value
+            return binding_value
+
+
 def _check_q_constraint(model_instance, q_constraint) -> bool:
     """Check if a model instance satisfies a Q constraint."""
-    # Convert the Q constraint to a filter and check if the instance matches
+    return _check_q_constraint_with_bindings(model_instance, q_constraint, {})
+
+
+def _check_q_constraint_with_bindings(model_instance, q_constraint, bindings: dict[str, Any]) -> bool:
+    """Check if a model instance satisfies a Q constraint, substituting variables from bindings."""
     try:
-        # Create a queryset for this model and apply the constraint
-        queryset = model_instance.__class__.objects.filter(q_constraint)
+        # If constraint has variable references, substitute them first
+        if has_variable_references(q_constraint):
+            # Convert PK values back to model instances for constraint checking
+            model_bindings = {}
+            for var_name, pk_value in bindings.items():
+                # Try to get the model instance from the pk
+                try:
+                    if hasattr(pk_value, 'pk'):
+                        # Already a model instance
+                        model_bindings[var_name] = pk_value
+                    else:
+                        # This is a PK value - we need to find the appropriate model
+                        # For now, we'll use the PK value directly and let Django handle it
+                        # This works because Django can use PKs directly in filters
+                        model_bindings[var_name] = pk_value
+                except Exception:
+                    # If we can't resolve the variable, constraint fails
+                    return False
+            
+            # Substitute variables in the constraint
+            resolved_constraint = substitute_variables_in_q(q_constraint, model_bindings)
+            
+            # Check if any variables remain unresolved
+            if has_variable_references(resolved_constraint):
+                # Can't evaluate constraint yet - variables still unbound
+                return True  # Defer constraint checking
+        else:
+            resolved_constraint = q_constraint
+        
+        # Convert the Q constraint to a filter and check if the instance matches
+        queryset = model_instance.__class__.objects.filter(resolved_constraint)
         # Check if this specific instance matches the constraint
-        return queryset.filter(pk=model_instance.pk).exists()
+        result = queryset.filter(pk=model_instance.pk).exists()
+        
+        return result
     except Exception:
         # If there's any error with the constraint check, assume it fails
         return False
@@ -377,17 +502,21 @@ def _fact_to_django_query(fact: Fact) -> tuple[dict[str, Any], list[Any]]:
         # Use Django model instance directly for ForeignKey lookup
         query_params["subject"] = fact.subject
     elif fact.subject.where is not None:
-        # Add Q object constraint with subject__ prefix
-        prefixed_q = _prefix_q_object(fact.subject.where, "subject")
-        q_objects.append(prefixed_q)
+        # Skip constraints with variable references - they need special handling
+        if not has_variable_references(fact.subject.where):
+            # Add Q object constraint with subject__ prefix
+            prefixed_q = _prefix_q_object(fact.subject.where, "subject")
+            q_objects.append(prefixed_q)
 
     if not isinstance(fact.object, Var):
         # Use Django model instance directly for ForeignKey lookup
         query_params["object"] = fact.object
     elif fact.object.where is not None:
-        # Add Q object constraint with object__ prefix
-        prefixed_q = _prefix_q_object(fact.object.where, "object")
-        q_objects.append(prefixed_q)
+        # Skip constraints with variable references - they need special handling
+        if not has_variable_references(fact.object.where):
+            # Add Q object constraint with object__ prefix
+            prefixed_q = _prefix_q_object(fact.object.where, "object")
+            q_objects.append(prefixed_q)
 
     return query_params, q_objects
 

@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### 🚀 New Features
+- **Cross-Variable Constraints**: Variables can now reference other variables in Q constraints
+  - Example: `Var("project", where=Q(company=Var("company")))` 
+  - Enables complex relational queries like finding employees working on projects from their own company
+  - Works in both direct queries and rule definitions
+  - Constraints are validated after all variables are bound for correctness
+
 ## [0.3.1] - 2025-07-23
 
 ### 🐛 Bug Fixes

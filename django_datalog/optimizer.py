@@ -21,7 +21,7 @@ from typing import Any
 from django.db.models import Q
 
 from django_datalog.facts import Fact
-from django_datalog.variables import Var
+from django_datalog.variables import Var, has_variable_references
 
 
 @dataclass
@@ -75,7 +75,9 @@ class ConstraintPropagator:
             variables = self._extract_variables(fact_pattern)
             for var in variables:
                 if var.where is not None:
-                    constraints_by_var[var.name].append(var.where)
+                    # Skip constraints that reference other variables - they need special handling
+                    if not has_variable_references(var.where):
+                        constraints_by_var[var.name].append(var.where)
 
         return dict(constraints_by_var)
 

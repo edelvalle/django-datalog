@@ -133,6 +133,20 @@ senior_emp = Var("employee", where=Q(years_experience__gte=5))
 
 # Multiple constraints
 constrained = Var("emp", where=Q(is_active=True) & Q(department="Engineering"))
+
+# Cross-variable constraints (reference other variables)
+query(
+    WorksFor(Var("emp"), Var("company")),
+    WorksOn(Var("emp"), Var("project", where=Q(company=Var("company"))))
+)
+# Finds employees working on projects from their own company
+
+# Complex cross-variable relationships
+query(
+    MemberOf(Var("emp"), Var("dept")),
+    WorksFor(Var("emp"), Var("company", where=Q(is_active=True, department__in=[Var("dept")])))
+)
+# Finds employees in departments that belong to active companies
 ```
 
 ## Performance Features
