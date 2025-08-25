@@ -12,15 +12,18 @@ from django_datalog.models import (
     reset_optimizer_cache,
     store_facts,
 )
-from django_datalog.optimizer import QueryPlanner
+# QueryPlanner was removed in optimizer simplification - these tests are no longer applicable
 
 from .models import Company, Department, Employee, MemberOf, Person, WorksFor
 
 
-class TestAdaptiveQueryPlanning(TestCase):
-    """Test that the query planner learns from execution times."""
+# NOTE: These tests are disabled because QueryPlanner was removed in optimizer simplification
+# The advanced query analyzer now handles all optimization through AST-based analysis
 
-    def setUp(self):
+# class TestAdaptiveQueryPlanning(TestCase):
+#     """Test that the query planner learns from execution times."""
+# 
+#     def setUp(self):
         """Set up test data."""
         reset_optimizer_cache()
 

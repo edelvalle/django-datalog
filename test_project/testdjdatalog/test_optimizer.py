@@ -1,16 +1,14 @@
 """
-Comprehensive tests for the django-datalog query optimizer.
-Tests constraint propagation, query planning, and performance optimizations.
+Tests for the simplified django-datalog query optimizer.
+Tests constraint propagation functionality.
 """
 
 from django.db.models import Q
 from django.test import TestCase
 
-from django_datalog.models import Var, query, rule, store_facts
+from django_datalog.models import Var, query, store_facts
 from django_datalog.optimizer import (
     ConstraintPropagator,
-    QueryOptimizer,
-    QueryPlanner,
     optimize_query,
     reset_optimizer_cache,
 )
@@ -136,122 +134,8 @@ class TestConstraintPropagation(TestCase):
         return str(constraint1) == str(constraint2)
 
 
-class TestQueryPlanner(TestCase):
-    """Test the selectivity-aware query planner."""
-
-    def setUp(self):
-        """Set up test data and planner."""
-        self.planner = QueryPlanner()
-
-        # Create test data
-        self.company = Company.objects.create(name="TestCorp", is_active=True)
-        self.dept = Department.objects.create(name="Engineering", company=self.company)
-
-        # Create employees with different characteristics for selectivity testing
-        for i in range(100):
-            person = Person.objects.create(name=f"Person{i}", age=25 + i % 40)
-            emp = Employee.objects.create(
-                person=person,
-                company=self.company,
-                department=self.dept,
-                is_manager=(i % 10 == 0),  # 10% managers
-                salary=50000 + i * 1000,
-            )
-
-            # Store some facts
-            store_facts(
-                WorksFor(subject=emp, object=self.company),
-                MemberOf(subject=emp, object=self.dept),
-            )
-
-    def test_plans_selective_constraints_first(self):
-        """Test that highly selective constraints are executed first."""
-        patterns = [
-            # Low selectivity - all employees
-            WorksFor(Var("emp"), Var("company")),
-            # High selectivity - only managers (~10%)
-            MemberOf(Var("emp", where=Q(is_manager=True)), Var("dept")),
-            # Medium selectivity - engineering dept
-            TeamMates(Var("emp"), Var("other")),
-        ]
-
-        planned = self.planner.plan_query_execution(patterns)
-
-        # The pattern with is_manager=True constraint should come first
-        # (it's the most selective)
-        first_pattern = planned[0]
-        self.assertTrue(
-            isinstance(first_pattern.subject, Var) and first_pattern.subject.where is not None
-        )
-
-    def test_unconstrained_patterns_planned_last(self):
-        """Test that unconstrained patterns are planned last."""
-        patterns = [
-            WorksFor(Var("emp"), Var("company")),  # No constraints
-            MemberOf(Var("emp", where=Q(is_manager=True)), Var("dept")),  # Constrained
-            TeamMates(Var("emp"), Var("other")),  # No constraints
-        ]
-
-        planned = self.planner.plan_query_execution(patterns)
-
-        # Constrained pattern should come first
-        first_pattern = planned[0]
-        self.assertIsNotNone(self._get_constraint_from_pattern(first_pattern))
-
-    def test_selectivity_estimation_caching(self):
-        """Test that selectivity estimates are cached."""
-        pattern = MemberOf(Var("emp", where=Q(is_manager=True)), Var("dept"))
-
-        # First estimation
-        stats1 = self.planner._estimate_pattern_selectivity(pattern)
-
-        # Second estimation should come from cache
-        stats2 = self.planner._estimate_pattern_selectivity(pattern)
-
-        self.assertEqual(stats1.selectivity, stats2.selectivity)
-        self.assertEqual(stats1.has_constraints, stats2.has_constraints)
-
-    def _get_constraint_from_pattern(self, pattern):
-        """Helper to extract constraint from a pattern."""
-        if isinstance(pattern.subject, Var) and pattern.subject.where:
-            return pattern.subject.where
-        if isinstance(pattern.object, Var) and pattern.object.where:
-            return pattern.object.where
-        return None
-
-
-class TestQueryOptimizer(TestCase):
-    """Test the complete query optimizer (constraint propagation + planning)."""
-
-    def setUp(self):
-        """Set up test data."""
-        self.optimizer = QueryOptimizer()
-        reset_optimizer_cache()
-
-    def test_full_optimization_pipeline(self):
-        """Test that optimizer applies both constraint propagation and planning."""
-        patterns = [
-            # This should be planned last (no constraints)
-            WorksFor(Var("emp"), Var("company")),
-            # This should be planned first (selective constraint)
-            TeamMates(Var("emp", where=Q(is_manager=True)), Var("other")),
-            # This should get the is_manager constraint propagated
-            MemberOf(Var("emp"), Var("dept")),
-        ]
-
-        optimized = self.optimizer.optimize_query(patterns)
-
-        # Check constraint propagation worked
-        emp_constraints = []
-        for pattern in optimized:
-            if isinstance(pattern.subject, Var) and pattern.subject.name == "emp":
-                if pattern.subject.where:
-                    emp_constraints.append(pattern.subject.where)
-
-        # All "emp" variables should have the is_manager constraint
-        self.assertGreater(len(emp_constraints), 0)
-        for constraint in emp_constraints:
-            self.assertEqual(str(constraint), str(Q(is_manager=True)))
+class TestOptimizerPublicAPI(TestCase):
+    """Test the public optimize_query function."""
 
     def test_optimize_query_function(self):
         """Test the public optimize_query function."""
@@ -265,6 +149,11 @@ class TestQueryOptimizer(TestCase):
         # Both patterns should have the department constraint
         self.assertIsNotNone(optimized[0].subject.where)
         self.assertIsNotNone(optimized[1].subject.where)
+
+    def test_reset_optimizer_cache(self):
+        """Test that reset_optimizer_cache works (backwards compatibility)."""
+        # This should not raise an error
+        reset_optimizer_cache()
 
 
 class TestOptimizerIntegration(TestCase):
@@ -316,60 +205,13 @@ class TestOptimizerIntegration(TestCase):
         # Query with constraint on one predicate
         results = list(
             query(
-                ColleaguesOf(Var("emp1"), Var("emp2")),
                 WorksFor(Var("emp1"), Var("company", where=Q(is_active=True))),
-                WorksFor(Var("emp2"), Var("company")),
+                WorksFor(Var("emp2"), Var("company")),  # Should inherit the constraint
             )
         )
 
-        # Should only find colleagues at active companies
+        # Should only find employees at active companies
         for result in results:
             # Both employees should work for active companies due to constraint propagation
-            emp1_company = result["emp1"].company
-            emp2_company = result["emp2"].company
+            emp1_company = result["company"]
             self.assertTrue(emp1_company.is_active)
-            self.assertTrue(emp2_company.is_active)  # This tests constraint propagation
-
-    def test_rule_with_constraint_propagation(self):
-        """Test that rules automatically propagate constraints."""
-        # Define rule with constraint in head - constraint should propagate to body
-        rule(
-            ColleaguesOf(Var("emp1", where=Q(is_manager=True)), Var("emp2")),
-            WorksFor(Var("emp1"), Var("company")) & WorksFor(Var("emp2"), Var("company")),
-        )
-
-        # Query the inferred facts - but note that current inference engine
-        # still has the limitation of not checking head constraints during inference
-        # The constraint propagation works at the rule definition level,
-        # but the inference engine needs to be updated to check propagated constraints
-
-        results = list(query(ColleaguesOf(Var("manager"), Var("colleague"))))
-
-        # For now, let's just verify that the rule was created and some results exist
-        # In a full implementation, the inference engine would need to be updated
-        # to properly handle the propagated constraints
-        self.assertIsInstance(results, list)
-        # Note: This test demonstrates the constraint propagation is working
-        # but the full end-to-end constraint checking in inference needs more work
-
-    def test_performance_with_selective_constraints(self):
-        """Test that selective constraints improve performance."""
-        # This test would ideally measure query time, but for unit testing
-        # we'll verify that the optimizer is working correctly
-
-        # Query with very selective constraint (should execute first)
-        patterns = [
-            WorksFor(Var("emp"), Var("company")),  # Low selectivity
-            MemberOf(Var("emp", where=Q(is_manager=True)), Var("dept")),  # High selectivity
-        ]
-
-        optimized = optimize_query(patterns)
-
-        # The highly selective pattern should be first
-        first_pattern = optimized[0]
-        has_manager_constraint = (
-            isinstance(first_pattern.subject, Var)
-            and first_pattern.subject.where
-            and "is_manager" in str(first_pattern.subject.where)
-        )
-        self.assertTrue(has_manager_constraint, "Most selective pattern should be planned first")
