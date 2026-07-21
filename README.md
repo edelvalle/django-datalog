@@ -31,19 +31,38 @@ python manage.py migrate
 ## Core Concepts
 
 ### Facts
-Define facts as Python classes with Django model integration:
+Define facts as Python classes with Django model integration. Use `Term[X]`
+(a shorthand for `X | Var[X]`) for each slot — it reads as "an `X`, or a
+variable standing for an `X`":
 
 ```python
-from django_datalog.models import Fact, Var
+from django_datalog.models import Fact, Term, Var
 
 class WorksFor(Fact):
-    subject: Employee | Var  # Employee
-    object: Company | Var    # Company
+    subject: Term[Employee]  # Employee
+    object: Term[Company]    # Company
 
 class ColleaguesOf(Fact, inferred=True):  # Inferred facts can't be stored directly
-    subject: Employee | Var
-    object: Employee | Var
+    subject: Term[Employee]
+    object: Term[Employee]
 ```
+
+### Typed variables
+`Var` is parametric: `Var[Employee]("emp")` records that the variable stands
+for an `Employee`, so it only fits into `Employee`-typed slots. Create each
+variable once and reuse it across a rule/query — the type is carried along and
+a type checker rejects a variable used in the wrong position:
+
+```python
+emp = Var[Employee]("emp")
+company = Var[Company]("company")
+
+query(WorksFor(emp, company))    # ✅ ok
+query(WorksFor(company, emp))    # ✗ type error: Var[Company] can't be an Employee slot
+```
+
+Bare `Var("emp")` is still valid (inferred from the slot it fills), so the
+type parameter is fully opt-in and backward compatible.
 
 ### Rules
 Define inference logic with tuples (AND) and lists (OR):
@@ -52,22 +71,26 @@ Define inference logic with tuples (AND) and lists (OR):
 from django_datalog.rules import rule
 
 # Simple rule: Colleagues work at same company
+emp1, emp2 = Var[Employee]("emp1"), Var[Employee]("emp2")
+company = Var[Company]("company")
 rule(
-    ColleaguesOf(Var("emp1"), Var("emp2")),
-    WorksFor(Var("emp1"), Var("company")) & WorksFor(Var("emp2"), Var("company"))
+    ColleaguesOf(emp1, emp2),
+    WorksFor(emp1, company) & WorksFor(emp2, company)
 )
 
 # Disjunctive rule: HasAccess via admin OR manager
+user, resource = Var[User]("user"), Var[Resource]("resource")
 rule(
-    HasAccess(Var("user"), Var("resource")),
-    IsAdmin(Var("user")) | IsManager(Var("user"), Var("resource"))
+    HasAccess(user, resource),
+    IsAdmin(user) | IsManager(user, resource)
 )
 
 # Mixed rule: Complex access control
+user, doc, folder = Var[User]("user"), Var[Document]("doc"), Var[Folder]("folder")
 rule(
-    CanEdit(Var("user"), Var("doc")),
-    IsOwner(Var("user"), Var("doc")) | 
-    (IsManager(Var("user"), Var("folder")) & Contains(Var("folder"), Var("doc")))
+    CanEdit(user, doc),
+    IsOwner(user, doc) |
+    (IsManager(user, folder) & Contains(folder, doc))
 )
 ```
 

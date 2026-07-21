@@ -1,4 +1,4 @@
-.PHONY: help test lint ruff typecheck format check clean reset-migrations
+.PHONY: help test lint ruff typecheck typecheck-vars format check clean reset-migrations
 
 help: ## Show this help message
 	@echo "Test project development commands:"
@@ -24,6 +24,10 @@ ruff: ## Run ruff linter only
 
 typecheck: ## Run zuban type checker
 	uv run --project .. zuban check testdjdatalog/
+
+typecheck-vars: ## Verify parametric Var enforcement (typed Var only fits matching slots)
+	PYTHONPATH=.. uv run --project .. zuban mypy --config-file typing_check.ini testdjdatalog/typing_check.py
+	@echo "✅ Parametric Var typing enforced"
 
 format: ## Auto-format code with ruff (includes import sorting)
 	uv run --project .. ruff check --fix --unsafe-fixes testdjdatalog/ --exclude testdjdatalog/migrations/

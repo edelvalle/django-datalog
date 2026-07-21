@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### 🎯 Type Safety
+- **Parametric `Var`**: `Var` is now generic — `Var[Employee]("emp")` records the model a variable stands for, so a type checker rejects a variable used in a mismatched fact slot (e.g. an `Employee` variable in a `Company` position). Create a variable once and reuse it across a rule/query to keep its binding type-consistent.
+- **`Term[X]` alias**: shorthand for `X | Var[X]`, used in fact field annotations (`subject: Term[Employee]`) so the model name isn't repeated.
+- **Static enforcement**: `Fact` is decorated with `@dataclass_transform`, so type checkers synthesize a typed `__init__` for every fact subclass and check `Var`/instance arguments against each slot.
+- **Backward compatible**: bare `Var("emp")` still works (inferred from the slot it fills); the type parameter is entirely opt-in.
+
+### 🔧 Changed
+- **Requires Django >= 5.2.16** (pinned to the 5.2 LTS series).
+
 ### 🚀 Major Features
 - **Cross-Variable Constraints & Advanced Query Optimization**: Complete query analysis system
 - **Cross-Variable References**: Variables can reference other variables in Q constraints (`Var("project", where=Q(company=Var("company")))`)
