@@ -128,8 +128,8 @@ class DjangoOrmEquivalentsTest(TestCase):
         print(")")
 
         datalog_results = list(query(
-            WorksFor(Var("emp"), Var("company")),
-            WorksOn(Var("emp"), Var("project", where=Q(company=Var("company"))))
+            WorksFor(Var[Employee]("emp"), Var[Company]("company")),
+            WorksOn(Var[Employee]("emp"), Var[Project]("project", where=Q(company=Var[Company]("company"))))
         ))
 
         print(f"Results: {len(datalog_results)} employees")
@@ -190,8 +190,8 @@ class DjangoOrmEquivalentsTest(TestCase):
         print(")")
 
         datalog_results = list(query(
-            MemberOf(Var("emp"), Var("dept")),
-            WorksFor(Var("emp"), Var("company", where=Q(is_active=True, department__in=[Var("dept")])))
+            MemberOf(Var[Employee]("emp"), Var[Department]("dept")),
+            WorksFor(Var[Employee]("emp"), Var[Company]("company", where=Q(is_active=True, department__in=[Var[Department]("dept")])))
         ))
 
         print(f"Results: {len(datalog_results)} employees")
@@ -232,8 +232,8 @@ class DjangoOrmEquivalentsTest(TestCase):
         initial_queries = len(connection.queries)
 
         datalog_results = list(query(
-            WorksFor(Var("emp"), Var("company")),
-            WorksOn(Var("emp"), Var("project", where=Q(company=Var("company"))))
+            WorksFor(Var[Employee]("emp"), Var[Company]("company")),
+            WorksOn(Var[Employee]("emp"), Var[Project]("project", where=Q(company=Var[Company]("company"))))
         ))
 
         datalog_query_count = len(connection.queries) - initial_queries

@@ -106,8 +106,8 @@ class CrossVariableConstraintsTest(TestCase):
         """Test cross-variable constraint: employees working on projects from their company."""
         # Query: Find employees working on projects where project.company == employee.company
         results = list(query(
-            WorksFor(Var("emp"), Var("company")),
-            WorksOn(Var("emp"), Var("project", where=Q(company=Var("company"))))
+            WorksFor(Var[Employee]("emp"), Var[Company]("company")),
+            WorksOn(Var[Employee]("emp"), Var[Project]("project", where=Q(company=Var[Company]("company"))))
         ))
 
         # Should find Alice and Bob (work for TechCorp, project_a is TechCorp's)
@@ -125,10 +125,10 @@ class CrossVariableConstraintsTest(TestCase):
         """Test cross-variable constraint: departments belonging to specific companies."""
         # Query: Find employees in departments that belong to active companies
         results = list(query(
-            MemberOf(Var("emp"), Var("dept")),
+            MemberOf(Var[Employee]("emp"), Var[Department]("dept")),
             WorksFor(
-                Var("emp"),
-                Var("company", where=Q(is_active=True, department__in=[Var("dept")]))
+                Var[Employee]("emp"),
+                Var[Company]("company", where=Q(is_active=True, department__in=[Var[Department]("dept")]))
             )
         ))
 
@@ -146,10 +146,10 @@ class CrossVariableConstraintsTest(TestCase):
         """Test cross-variable constraints combined with regular constraints."""
         # Query: Find managers working in departments with budget > 75000
         results = list(query(
-            MemberOf(Var("emp", where=Q(is_manager=True)), Var("dept", where=Q(budget__gt=75000))),
+            MemberOf(Var[Employee]("emp", where=Q(is_manager=True)), Var[Department]("dept", where=Q(budget__gt=75000))),
             WorksFor(
-                Var("emp"),
-                Var("company", where=Q(is_active=True, department__in=[Var("dept")]))
+                Var[Employee]("emp"),
+                Var[Company]("company", where=Q(is_active=True, department__in=[Var[Department]("dept")]))
             )
         ))
 
@@ -166,15 +166,15 @@ class CrossVariableConstraintsTest(TestCase):
         # AND work in departments that belong to that company
         # Note: This rule will include self-colleagues, but the query will find all valid colleagues
         rule(
-            ColleaguesOf(Var("emp1"), Var("emp2")),
-            WorksFor(Var("emp1"), Var("company")) &
-            WorksFor(Var("emp2"), Var("company")) &
-            MemberOf(Var("emp1"), Var("dept1", where=Q(company=Var("company")))) &
-            MemberOf(Var("emp2"), Var("dept2", where=Q(company=Var("company"))))
+            ColleaguesOf(Var[Employee]("emp1"), Var[Employee]("emp2")),
+            WorksFor(Var[Employee]("emp1"), Var[Company]("company")) &
+            WorksFor(Var[Employee]("emp2"), Var[Company]("company")) &
+            MemberOf(Var[Employee]("emp1"), Var[Department]("dept1", where=Q(company=Var[Company]("company")))) &
+            MemberOf(Var[Employee]("emp2"), Var[Department]("dept2", where=Q(company=Var[Company]("company"))))
         )
 
         # Query for Alice's colleagues
-        results = list(query(ColleaguesOf(self.alice, Var("colleague"))))
+        results = list(query(ColleaguesOf(self.alice, Var[Employee]("colleague"))))
 
         # Should find Alice, Bob and Charlie (same company, departments belong to company)
         # Should NOT find Dave (different company)
@@ -191,8 +191,8 @@ class CrossVariableConstraintsTest(TestCase):
         # This should work fine when implemented, but test graceful handling
         try:
             list(query(
-                WorksFor(Var("emp"), Var("company")),
-                MemberOf(Var("emp"), Var("dept", where=Q(nonexistent_field=Var("company"))))
+                WorksFor(Var[Employee]("emp"), Var[Company]("company")),
+                MemberOf(Var[Employee]("emp"), Var[Department]("dept", where=Q(nonexistent_field=Var[Company]("company"))))
             ))
             # If implementation is complete, this might work or give empty results
             # If not implemented yet, might raise an exception

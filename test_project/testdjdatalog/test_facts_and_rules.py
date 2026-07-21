@@ -42,7 +42,7 @@ class FactsAndRulesTests(TestCase):
         )
 
         # Query Alice's children
-        alice_children = list(query(ParentOf(self.alice, Var("child"))))
+        alice_children = list(query(ParentOf(self.alice, Var[Person]("child"))))
         self.assertEqual(len(alice_children), 2)
 
         child_names = {result["child"].name for result in alice_children}
@@ -58,7 +58,7 @@ class FactsAndRulesTests(TestCase):
 
         # Query for people in New York who work at the company
         ny_workers = list(
-            query(PersonWorksFor(Var("person", where=Q(city="New York")), self.company))
+            query(PersonWorksFor(Var[Person]("person", where=Q(city="New York")), self.company))
         )
 
         self.assertEqual(len(ny_workers), 1)  # Only Alice
@@ -75,7 +75,7 @@ class FactsAndRulesTests(TestCase):
         )
 
         # Query for John's grandchildren (should be inferred)
-        john_grandchildren = list(query(GrandparentOf(self.john, Var("grandchild"))))
+        john_grandchildren = list(query(GrandparentOf(self.john, Var[Person]("grandchild"))))
         self.assertEqual(len(john_grandchildren), 2)
 
         grandchild_names = {result["grandchild"].name for result in john_grandchildren}
@@ -91,7 +91,7 @@ class FactsAndRulesTests(TestCase):
         )
 
         # Query for Bob's siblings
-        bob_siblings = list(query(SiblingOf(self.bob, Var("sibling"))))
+        bob_siblings = list(query(SiblingOf(self.bob, Var[Person]("sibling"))))
 
         # Should include only Charlie (Bob should not be sibling of himself)
         # Filter out self-siblings in the results for now until rule is fixed
@@ -110,7 +110,7 @@ class FactsAndRulesTests(TestCase):
         )
 
         # Query for Alice's colleagues
-        alice_colleagues = list(query(PersonColleaguesOf(self.alice, Var("colleague"))))
+        alice_colleagues = list(query(PersonColleaguesOf(self.alice, Var[Person]("colleague"))))
 
         # Should include Bob and Alice herself
         self.assertEqual(len(alice_colleagues), 2)
@@ -123,14 +123,14 @@ class FactsAndRulesTests(TestCase):
         store_facts(ParentOf(subject=self.john, object=self.alice))
 
         # Verify it exists
-        results = list(query(ParentOf(self.john, Var("child"))))
+        results = list(query(ParentOf(self.john, Var[Person]("child"))))
         self.assertEqual(len(results), 1)
 
         # Retract the fact
         retract_facts(ParentOf(subject=self.john, object=self.alice))
 
         # Verify it's gone
-        results = list(query(ParentOf(self.john, Var("child"))))
+        results = list(query(ParentOf(self.john, Var[Person]("child"))))
         self.assertEqual(len(results), 0)
 
     def test_complex_constraints_with_rules(self):
@@ -145,7 +145,7 @@ class FactsAndRulesTests(TestCase):
 
         # Query for John's adult grandchildren
         adult_grandchildren = list(
-            query(GrandparentOf(self.john, Var("grandchild", where=Q(age__gte=18))))
+            query(GrandparentOf(self.john, Var[Person]("grandchild", where=Q(age__gte=18))))
         )
 
         self.assertEqual(len(adult_grandchildren), 1)  # Only Bob (age 18)

@@ -122,8 +122,8 @@ class QueryCountTest(TestCase):
 
         def cross_variable_query():
             return query(
-                WorksFor(Var("emp"), Var("company")),
-                WorksOn(Var("emp"), Var("project", where=Q(company=Var("company"))))
+                WorksFor(Var[Employee]("emp"), Var[Company]("company")),
+                WorksOn(Var[Employee]("emp"), Var[Project]("project", where=Q(company=Var[Company]("company"))))
             )
 
         # Measure current implementation query count
@@ -147,8 +147,8 @@ class QueryCountTest(TestCase):
 
         # Debug: Let's check the result without the constraint
         simple_result = list(query(
-            WorksFor(Var("emp"), Var("company")),
-            WorksOn(Var("emp"), Var("project"))
+            WorksFor(Var[Employee]("emp"), Var[Company]("company")),
+            WorksOn(Var[Employee]("emp"), Var[Project]("project"))
         ))
         print(f"\nResults without cross-variable constraint: {len(simple_result)}")
         print(f"Results WITH cross-variable constraint: {len(result)}")
@@ -199,8 +199,8 @@ class QueryCountTest(TestCase):
         # Run the actual query to verify it still works
         def cross_variable_query():
             return query(
-                WorksFor(Var("emp"), Var("company")),
-                WorksOn(Var("emp"), Var("project", where=Q(company=Var("company"))))
+                WorksFor(Var[Employee]("emp"), Var[Company]("company")),
+                WorksOn(Var[Employee]("emp"), Var[Project]("project", where=Q(company=Var[Company]("company"))))
             )
 
         result, query_count = self.count_queries(cross_variable_query)
@@ -219,7 +219,7 @@ class QueryCountTest(TestCase):
         """Test query count for regular constraints (baseline comparison)."""
 
         def regular_query():
-            return query(WorksFor(Var("emp", where=Q(is_manager=True)), Var("company")))
+            return query(WorksFor(Var[Employee]("emp", where=Q(is_manager=True)), Var[Company]("company")))
 
         result, query_count = self.count_queries(regular_query)
 
@@ -240,8 +240,8 @@ class QueryCountTest(TestCase):
 
         def complex_cross_variable_query():
             return query(
-                MemberOf(Var("emp"), Var("dept")),
-                WorksFor(Var("emp"), Var("company", where=Q(is_active=True, department__in=[Var("dept")])))
+                MemberOf(Var[Employee]("emp"), Var[Department]("dept")),
+                WorksFor(Var[Employee]("emp"), Var[Company]("company", where=Q(is_active=True, department__in=[Var[Department]("dept")])))
             )
 
         result, query_count = self.count_queries(complex_cross_variable_query)

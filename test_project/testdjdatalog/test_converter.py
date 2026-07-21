@@ -9,7 +9,11 @@ from django_datalog.converter import analyze_query_patterns, convert_to_orm
 from django_datalog.models import Var
 
 from .models import (
+    Company,
+    Department,
+    Employee,
     MemberOf,
+    Project,
     WorksFor,
     WorksOn,
 )
@@ -23,8 +27,8 @@ class ConverterTest(TestCase):
 
         # Django-datalog query with cross-variable constraint
         conditions = [
-            WorksFor(Var("emp"), Var("company")),
-            WorksOn(Var("emp"), Var("project", where=Q(company=Var("company"))))
+            WorksFor(Var[Employee]("emp"), Var[Company]("company")),
+            WorksOn(Var[Employee]("emp"), Var[Project]("project", where=Q(company=Var[Company]("company"))))
         ]
 
         # Convert to Django ORM
@@ -69,8 +73,8 @@ class ConverterTest(TestCase):
         """Test conversion of simple join queries."""
 
         conditions = [
-            WorksFor(Var("emp", where=Q(is_manager=True)), Var("company")),
-            MemberOf(Var("emp"), Var("dept"))
+            WorksFor(Var[Employee]("emp", where=Q(is_manager=True)), Var[Company]("company")),
+            MemberOf(Var[Employee]("emp"), Var[Department]("dept"))
         ]
 
         result = convert_to_orm(conditions)
@@ -90,8 +94,8 @@ class ConverterTest(TestCase):
         """Test conversion of same-entity patterns."""
 
         conditions = [
-            WorksFor(Var("emp"), Var("company")),
-            MemberOf(Var("emp"), Var("dept", where=Q(company=Var("company"))))
+            WorksFor(Var[Employee]("emp"), Var[Company]("company")),
+            MemberOf(Var[Employee]("emp"), Var[Department]("dept", where=Q(company=Var[Company]("company"))))
         ]
 
         result = convert_to_orm(conditions)
@@ -110,8 +114,8 @@ class ConverterTest(TestCase):
         """Test the query pattern analysis functionality."""
 
         conditions = [
-            WorksFor(Var("emp"), Var("company")),
-            WorksOn(Var("emp"), Var("project", where=Q(company=Var("company"))))
+            WorksFor(Var[Employee]("emp"), Var[Company]("company")),
+            WorksOn(Var[Employee]("emp"), Var[Project]("project", where=Q(company=Var[Company]("company"))))
         ]
 
         analysis = analyze_query_patterns(conditions)
@@ -150,24 +154,24 @@ class ConverterTest(TestCase):
             {
                 "name": "Cross-Variable Constraint",
                 "conditions": [
-                    WorksFor(Var("emp"), Var("company")),
-                    WorksOn(Var("emp"), Var("project", where=Q(company=Var("company"))))
+                    WorksFor(Var[Employee]("emp"), Var[Company]("company")),
+                    WorksOn(Var[Employee]("emp"), Var[Project]("project", where=Q(company=Var[Company]("company"))))
                 ],
                 "expected_patterns": ["Cross-Variable Constraint"]
             },
             {
                 "name": "Simple Filter",
                 "conditions": [
-                    WorksFor(Var("emp", where=Q(is_manager=True)), Var("company"))
+                    WorksFor(Var[Employee]("emp", where=Q(is_manager=True)), Var[Company]("company"))
                 ],
                 "expected_patterns": []  # Should use simple join pattern
             },
             {
                 "name": "Multiple Joins",
                 "conditions": [
-                    WorksFor(Var("emp"), Var("company")),
-                    MemberOf(Var("emp"), Var("dept")),
-                    WorksOn(Var("emp"), Var("project"))
+                    WorksFor(Var[Employee]("emp"), Var[Company]("company")),
+                    MemberOf(Var[Employee]("emp"), Var[Department]("dept")),
+                    WorksOn(Var[Employee]("emp"), Var[Project]("project"))
                 ],
                 "expected_patterns": []  # Complex pattern
             }
@@ -196,7 +200,7 @@ class ConverterTest(TestCase):
         self.assertIsNotNone(result.orm_code)
 
         # Single condition
-        result = convert_to_orm([WorksFor(Var("emp"), Var("company"))])
+        result = convert_to_orm([WorksFor(Var[Employee]("emp"), Var[Company]("company"))])
         self.assertIsNotNone(result.orm_code)
         self.assertGreater(result.improvement_percentage, 0)
 
@@ -204,14 +208,14 @@ class ConverterTest(TestCase):
         """Test that performance estimations are reasonable."""
 
         # Simple query should have lower original cost
-        simple_conditions = [WorksFor(Var("emp"), Var("company"))]
+        simple_conditions = [WorksFor(Var[Employee]("emp"), Var[Company]("company"))]
         simple_result = convert_to_orm(simple_conditions)
 
         # Complex query should have higher original cost
         complex_conditions = [
-            WorksFor(Var("emp"), Var("company")),
-            WorksOn(Var("emp"), Var("project", where=Q(company=Var("company")))),
-            MemberOf(Var("emp"), Var("dept", where=Q(company=Var("company"))))
+            WorksFor(Var[Employee]("emp"), Var[Company]("company")),
+            WorksOn(Var[Employee]("emp"), Var[Project]("project", where=Q(company=Var[Company]("company")))),
+            MemberOf(Var[Employee]("emp"), Var[Department]("dept", where=Q(company=Var[Company]("company"))))
         ]
         complex_result = convert_to_orm(complex_conditions)
 

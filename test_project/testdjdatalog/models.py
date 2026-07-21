@@ -8,7 +8,7 @@ from decimal import Decimal
 from django.contrib.auth.models import User
 from django.db import models
 
-from django_datalog.models import Fact, Var
+from django_datalog.models import Fact, Term, Var
 
 
 # Models originally from django_datalog.models (used by internal tests)
@@ -112,117 +112,117 @@ class ProjectAssignment(models.Model):
 class ParentOf(Fact):
     """Person is parent of another person."""
 
-    subject: Person | Var  # Parent
-    object: Person | Var  # Child
+    subject: Term[Person]  # Parent
+    object: Term[Person]  # Child
 
 
 class MarriedTo(Fact):
     """Person is married to another person."""
 
-    subject: Person | Var  # Spouse 1
-    object: Person | Var  # Spouse 2
+    subject: Term[Person]  # Spouse 1
+    object: Term[Person]  # Spouse 2
 
 
 class GrandparentOf(Fact, inferred=True):
     """Person is grandparent of another person (inferred)."""
 
-    subject: Person | Var  # Grandparent
-    object: Person | Var  # Grandchild
+    subject: Term[Person]  # Grandparent
+    object: Term[Person]  # Grandchild
 
 
 class SiblingOf(Fact, inferred=True):
     """Person is sibling of another person."""
 
-    subject: Person | Var  # Sibling 1
-    object: Person | Var  # Sibling 2
+    subject: Term[Person]  # Sibling 1
+    object: Term[Person]  # Sibling 2
 
 
 class PersonWorksFor(Fact):
     """Person works for a company (for internal tests)."""
 
-    subject: Person | Var  # Person
-    object: Company | Var  # Company
+    subject: Term[Person]  # Person
+    object: Term[Company]  # Company
 
 
 class WorksFor(Fact):
     """Employee works for a company."""
 
-    subject: Employee | Var  # Employee
-    object: Company | Var  # Company
+    subject: Term[Employee]  # Employee
+    object: Term[Company]  # Company
 
 
 class MemberOf(Fact):
     """Employee is member of a department."""
 
-    subject: Employee | Var  # Employee
-    object: Department | Var  # Department
+    subject: Term[Employee]  # Employee
+    object: Term[Department]  # Department
 
 
 class ManagerOf(Fact):
     """Employee is manager of another employee."""
 
-    subject: Employee | Var  # Manager
-    object: Employee | Var  # Employee being managed
+    subject: Term[Employee]  # Manager
+    object: Term[Employee]  # Employee being managed
 
 
 class WorksOn(Fact):
     """Employee works on a project."""
 
-    subject: Employee | Var  # Employee
-    object: Project | Var  # Project
+    subject: Term[Employee]  # Employee
+    object: Term[Project]  # Project
 
 
 class PersonColleaguesOf(Fact, inferred=True):
     """Two people are colleagues (work at same company) - for internal tests."""
 
-    subject: Person | Var  # Person 1
-    object: Person | Var  # Person 2
+    subject: Term[Person]  # Person 1
+    object: Term[Person]  # Person 2
 
 
 class ColleaguesOf(Fact, inferred=True):
     """Two employees are colleagues (work at same company)."""
 
-    subject: Employee | Var  # Employee 1
-    object: Employee | Var  # Employee 2
+    subject: Term[Employee]  # Employee 1
+    object: Term[Employee]  # Employee 2
 
 
 class TeamMates(Fact, inferred=True):
     """Two employees are teammates (work in same department)."""
 
-    subject: Employee | Var  # Employee 1
-    object: Employee | Var  # Employee 2
+    subject: Term[Employee]  # Employee 1
+    object: Term[Employee]  # Employee 2
 
 
 class ProjectColleagues(Fact, inferred=True):
     """Two employees are project colleagues (work on same project)."""
 
-    subject: Employee | Var  # Employee 1
-    object: Employee | Var  # Employee 2
+    subject: Term[Employee]  # Employee 1
+    object: Term[Employee]  # Employee 2
 
 
 class CanAccess(Fact):
     """Employee can access a project."""
 
-    subject: Employee | Var  # Employee
-    object: Project | Var  # Project
+    subject: Term[Employee]  # Employee
+    object: Term[Project]  # Project
 
 
 class HasAuthority(Fact):
     """Employee has authority over a department/project."""
 
-    subject: Employee | Var  # Employee
-    object: Department | Project | Var  # Department or Project
+    subject: Term[Employee]  # Employee
+    object: Term[Department] | Term[Project]  # Department or Project
 
 
 class IsManager(Fact):
     """Person is a manager of another person."""
 
-    subject: Person | Var
-    object: Person | Var
+    subject: Term[Person]
+    object: Term[Person]
 
 
 class IsAdmin(Fact):
     """Person is an admin of another person."""
 
-    subject: Person | Var
-    object: Person | Var
+    subject: Term[Person]
+    object: Term[Person]

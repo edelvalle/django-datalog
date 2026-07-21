@@ -36,9 +36,9 @@ class TestConstraintPropagation(TestCase):
         """Test that a single constraint propagates to all instances of a variable."""
         # Create fact patterns with one constrained variable
         patterns = [
-            WorksFor(Var("emp", where=Q(is_manager=True)), Var("company")),
-            MemberOf(Var("emp"), Var("dept")),  # Should get the constraint
-            TeamMates(Var("emp"), Var("other")),  # Should get the constraint
+            WorksFor(Var[Employee]("emp", where=Q(is_manager=True)), Var[Company]("company")),
+            MemberOf(Var[Employee]("emp"), Var[Department]("dept")),  # Should get the constraint
+            TeamMates(Var[Employee]("emp"), Var[Employee]("other")),  # Should get the constraint
         ]
 
         # Apply constraint propagation
@@ -58,8 +58,8 @@ class TestConstraintPropagation(TestCase):
     def test_multiple_constraints_anded_together(self):
         """Test that multiple constraints on the same variable are ANDed."""
         patterns = [
-            WorksFor(Var("emp", where=Q(is_manager=True)), Var("company")),
-            MemberOf(Var("emp", where=Q(department="Engineering")), Var("dept")),
+            WorksFor(Var[Employee]("emp", where=Q(is_manager=True)), Var[Company]("company")),
+            MemberOf(Var[Employee]("emp", where=Q(department="Engineering")), Var[Department]("dept")),
         ]
 
         result = self.propagator.propagate_constraints(patterns)
@@ -80,9 +80,9 @@ class TestConstraintPropagation(TestCase):
     def test_different_variables_keep_separate_constraints(self):
         """Test that different variables maintain their own constraints."""
         patterns = [
-            WorksFor(Var("emp1", where=Q(is_manager=True)), Var("company")),
-            WorksFor(Var("emp2", where=Q(department="Engineering")), Var("company")),
-            TeamMates(Var("emp1"), Var("emp2")),
+            WorksFor(Var[Employee]("emp1", where=Q(is_manager=True)), Var[Company]("company")),
+            WorksFor(Var[Employee]("emp2", where=Q(department="Engineering")), Var[Company]("company")),
+            TeamMates(Var[Employee]("emp1"), Var[Employee]("emp2")),
         ]
 
         result = self.propagator.propagate_constraints(patterns)
@@ -98,8 +98,8 @@ class TestConstraintPropagation(TestCase):
     def test_no_constraints_unchanged(self):
         """Test that patterns without constraints remain unchanged."""
         patterns = [
-            WorksFor(Var("emp"), Var("company")),
-            MemberOf(Var("emp"), Var("dept")),
+            WorksFor(Var[Employee]("emp"), Var[Company]("company")),
+            MemberOf(Var[Employee]("emp"), Var[Department]("dept")),
         ]
 
         result = self.propagator.propagate_constraints(patterns)
@@ -113,8 +113,8 @@ class TestConstraintPropagation(TestCase):
     def test_constraint_propagation_across_subject_and_object(self):
         """Test constraint propagation when same variable appears as subject and object."""
         patterns = [
-            WorksFor(Var("person", where=Q(age__gte=18)), Var("company")),
-            ColleaguesOf(Var("other"), Var("person")),  # person as object
+            WorksFor(Var[Employee]("person", where=Q(age__gte=18)), Var[Company]("company")),
+            ColleaguesOf(Var[Employee]("other"), Var[Employee]("person")),  # person as object
         ]
 
         result = self.propagator.propagate_constraints(patterns)
@@ -140,8 +140,8 @@ class TestOptimizerPublicAPI(TestCase):
     def test_optimize_query_function(self):
         """Test the public optimize_query function."""
         patterns = [
-            WorksFor(Var("emp", where=Q(department="Engineering")), Var("company")),
-            MemberOf(Var("emp"), Var("dept")),
+            WorksFor(Var[Employee]("emp", where=Q(department="Engineering")), Var[Company]("company")),
+            MemberOf(Var[Employee]("emp"), Var[Department]("dept")),
         ]
 
         optimized = optimize_query(patterns)
@@ -205,8 +205,8 @@ class TestOptimizerIntegration(TestCase):
         # Query with constraint on one predicate
         results = list(
             query(
-                WorksFor(Var("emp1"), Var("company", where=Q(is_active=True))),
-                WorksFor(Var("emp2"), Var("company")),  # Should inherit the constraint
+                WorksFor(Var[Employee]("emp1"), Var[Company]("company", where=Q(is_active=True))),
+                WorksFor(Var[Employee]("emp2"), Var[Company]("company")),  # Should inherit the constraint
             )
         )
 

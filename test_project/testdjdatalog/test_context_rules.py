@@ -5,7 +5,7 @@ Tests that rules defined within rule_context are only active within that context
 
 from django.test import TestCase
 
-from django_datalog.models import Fact, Var, get_rules, query, rule, rule_context, store_facts
+from django_datalog.models import Fact, Term, Var, get_rules, query, rule, rule_context, store_facts
 
 from .models import (
     ColleaguesOf,
@@ -22,8 +22,8 @@ from .models import (
 class TestContextTeammates(Fact, inferred=True):
     """Test-specific fact that won't conflict with global rules."""
 
-    subject: Employee | Var  # Employee 1
-    object: Employee | Var  # Employee 2
+    subject: Term[Employee]  # Employee 1
+    object: Term[Employee]  # Employee 2
 
 
 class ContextRulesTests(TestCase):
@@ -95,21 +95,21 @@ class ContextRulesTests(TestCase):
 
         # Outside context - no test teammates should be inferred
         # (TestContextTeammates has no global rules)
-        teammates_outside = list(query(TestContextTeammates(Var("emp1"), Var("emp2"))))
+        teammates_outside = list(query(TestContextTeammates(Var[Employee]("emp1"), Var[Employee]("emp2"))))
         self.assertEqual(len(teammates_outside), 0)
 
         # Inside context - teammates should be inferred
         with rule_context():
             rule(
-                TestContextTeammates(Var("emp1"), Var("emp2")),
+                TestContextTeammates(Var[Employee]("emp1"), Var[Employee]("emp2")),
                 (
-                    MemberOf(Var("emp1"), Var("dept")),
-                    MemberOf(Var("emp2"), Var("dept")),
+                    MemberOf(Var[Employee]("emp1"), Var[Department]("dept")),
+                    MemberOf(Var[Employee]("emp2"), Var[Department]("dept")),
                 ),
             )
 
             # Rules should be active here
-            teammates_inside = list(query(TestContextTeammates(Var("emp1"), Var("emp2"))))
+            teammates_inside = list(query(TestContextTeammates(Var[Employee]("emp1"), Var[Employee]("emp2"))))
             self.assertGreater(len(teammates_inside), 0)
 
             # Should find Alice and Bob as teammates
@@ -124,7 +124,7 @@ class ContextRulesTests(TestCase):
             self.assertIn("Bob", teammate_names)
 
         # Outside context again - no test teammates should be inferred
-        teammates_after = list(query(TestContextTeammates(Var("emp1"), Var("emp2"))))
+        teammates_after = list(query(TestContextTeammates(Var[Employee]("emp1"), Var[Employee]("emp2"))))
         self.assertEqual(len(teammates_after), 0)
 
         # Rule count should be back to original
@@ -136,13 +136,13 @@ class ContextRulesTests(TestCase):
         """Test context manager with rules defined inside."""
         # Define rule inside context using new syntax
         rule(
-            ColleaguesOf(Var("emp1"), Var("emp2")),
+            ColleaguesOf(Var[Employee]("emp1"), Var[Employee]("emp2")),
             (
-                WorksFor(Var("emp1"), Var("company")),
-                WorksFor(Var("emp2"), Var("company")),
+                WorksFor(Var[Employee]("emp1"), Var[Company]("company")),
+                WorksFor(Var[Employee]("emp2"), Var[Company]("company")),
             ),
         )
-        colleagues = list(query(ColleaguesOf(Var("emp1"), Var("emp2"))))
+        colleagues = list(query(ColleaguesOf(Var[Employee]("emp1"), Var[Employee]("emp2"))))
 
         # Should find Alice and Bob as colleagues (same company)
         colleague_names = set()
@@ -178,25 +178,25 @@ class ContextRulesTests(TestCase):
         """Test multiple rules in the same context."""
         # Rule 1: Teammates based on department
         rule(
-            TeamMates(Var("emp1"), Var("emp2")),
+            TeamMates(Var[Employee]("emp1"), Var[Employee]("emp2")),
             (
-                MemberOf(Var("emp1"), Var("dept")),
-                MemberOf(Var("emp2"), Var("dept")),
+                MemberOf(Var[Employee]("emp1"), Var[Department]("dept")),
+                MemberOf(Var[Employee]("emp2"), Var[Department]("dept")),
             ),
         )
 
         # Rule 2: Colleagues based on company
         rule(
-            ColleaguesOf(Var("emp1"), Var("emp2")),
+            ColleaguesOf(Var[Employee]("emp1"), Var[Employee]("emp2")),
             (
-                WorksFor(Var("emp1"), Var("company")),
-                WorksFor(Var("emp2"), Var("company")),
+                WorksFor(Var[Employee]("emp1"), Var[Company]("company")),
+                WorksFor(Var[Employee]("emp2"), Var[Company]("company")),
             ),
         )
 
         # Both rules should be active
-        teammates = list(query(TeamMates(Var("emp1"), Var("emp2"))))
-        colleagues = list(query(ColleaguesOf(Var("emp1"), Var("emp2"))))
+        teammates = list(query(TeamMates(Var[Employee]("emp1"), Var[Employee]("emp2"))))
+        colleagues = list(query(ColleaguesOf(Var[Employee]("emp1"), Var[Employee]("emp2"))))
 
         self.assertGreater(len(teammates), 0)
         self.assertGreater(len(colleagues), 0)
@@ -206,16 +206,16 @@ class ContextRulesTests(TestCase):
         with rule_context():
             # Outer context rule
             rule(
-                ColleaguesOf(Var("emp1"), Var("emp2")),
+                ColleaguesOf(Var[Employee]("emp1"), Var[Employee]("emp2")),
                 (
-                    WorksFor(Var("emp1"), Var("company")),
-                    WorksFor(Var("emp2"), Var("company")),
+                    WorksFor(Var[Employee]("emp1"), Var[Company]("company")),
+                    WorksFor(Var[Employee]("emp2"), Var[Company]("company")),
                 ),
             )
 
             # Should have colleagues here
-            colleagues_outer = list(query(ColleaguesOf(Var("emp1"), Var("emp2"))))
-            test_teammates_outer = list(query(TestContextTeammates(Var("emp1"), Var("emp2"))))
+            colleagues_outer = list(query(ColleaguesOf(Var[Employee]("emp1"), Var[Employee]("emp2"))))
+            test_teammates_outer = list(query(TestContextTeammates(Var[Employee]("emp1"), Var[Employee]("emp2"))))
 
             self.assertGreater(len(colleagues_outer), 0)
             self.assertEqual(len(test_teammates_outer), 0)  # No test teammate rule yet
@@ -223,23 +223,23 @@ class ContextRulesTests(TestCase):
             with rule_context():
                 # Inner context rule
                 rule(
-                    TestContextTeammates(Var("emp1"), Var("emp2")),
+                    TestContextTeammates(Var[Employee]("emp1"), Var[Employee]("emp2")),
                     (
-                        MemberOf(Var("emp1"), Var("dept")),
-                        MemberOf(Var("emp2"), Var("dept")),
+                        MemberOf(Var[Employee]("emp1"), Var[Department]("dept")),
+                        MemberOf(Var[Employee]("emp2"), Var[Department]("dept")),
                     ),
                 )
 
                 # Should have both colleagues (from outer) and test teammates (from inner)
-                colleagues_inner = list(query(ColleaguesOf(Var("emp1"), Var("emp2"))))
-                test_teammates_inner = list(query(TestContextTeammates(Var("emp1"), Var("emp2"))))
+                colleagues_inner = list(query(ColleaguesOf(Var[Employee]("emp1"), Var[Employee]("emp2"))))
+                test_teammates_inner = list(query(TestContextTeammates(Var[Employee]("emp1"), Var[Employee]("emp2"))))
 
                 self.assertGreater(len(colleagues_inner), 0)
                 self.assertGreater(len(test_teammates_inner), 0)
 
             # Back to outer context - should still have colleagues but not test teammates
-            colleagues_back = list(query(ColleaguesOf(Var("emp1"), Var("emp2"))))
-            test_teammates_back = list(query(TestContextTeammates(Var("emp1"), Var("emp2"))))
+            colleagues_back = list(query(ColleaguesOf(Var[Employee]("emp1"), Var[Employee]("emp2"))))
+            test_teammates_back = list(query(TestContextTeammates(Var[Employee]("emp1"), Var[Employee]("emp2"))))
 
             self.assertGreater(len(colleagues_back), 0)
             self.assertEqual(len(test_teammates_back), 0)
@@ -249,33 +249,33 @@ class ContextRulesTests(TestCase):
         # Note: ColleaguesOf rule already exists globally, so we don't need to add it
 
         # Should work before context (global rule is active)
-        colleagues_before = list(query(ColleaguesOf(Var("emp1"), Var("emp2"))))
+        colleagues_before = list(query(ColleaguesOf(Var[Employee]("emp1"), Var[Employee]("emp2"))))
         self.assertGreater(len(colleagues_before), 0)
 
         # Test teammates should not exist (no global rule for TestContextTeammates)
-        test_teammates_before = list(query(TestContextTeammates(Var("emp1"), Var("emp2"))))
+        test_teammates_before = list(query(TestContextTeammates(Var[Employee]("emp1"), Var[Employee]("emp2"))))
         self.assertEqual(len(test_teammates_before), 0)
 
         with rule_context():
             # Add temporary rule for test teammates
             rule(
-                TestContextTeammates(Var("emp1"), Var("emp2")),
+                TestContextTeammates(Var[Employee]("emp1"), Var[Employee]("emp2")),
                 (
-                    MemberOf(Var("emp1"), Var("dept")),
-                    MemberOf(Var("emp2"), Var("dept")),
+                    MemberOf(Var[Employee]("emp1"), Var[Department]("dept")),
+                    MemberOf(Var[Employee]("emp2"), Var[Department]("dept")),
                 ),
             )
 
             # Both global colleagues and context test teammates should work
-            colleagues_inside = list(query(ColleaguesOf(Var("emp1"), Var("emp2"))))
-            test_teammates_inside = list(query(TestContextTeammates(Var("emp1"), Var("emp2"))))
+            colleagues_inside = list(query(ColleaguesOf(Var[Employee]("emp1"), Var[Employee]("emp2"))))
+            test_teammates_inside = list(query(TestContextTeammates(Var[Employee]("emp1"), Var[Employee]("emp2"))))
 
             self.assertGreater(len(colleagues_inside), 0)
             self.assertGreater(len(test_teammates_inside), 0)
 
         # Global rule should still work after context, temporary rule should be gone
-        colleagues_after = list(query(ColleaguesOf(Var("emp1"), Var("emp2"))))
-        test_teammates_after = list(query(TestContextTeammates(Var("emp1"), Var("emp2"))))
+        colleagues_after = list(query(ColleaguesOf(Var[Employee]("emp1"), Var[Employee]("emp2"))))
+        test_teammates_after = list(query(TestContextTeammates(Var[Employee]("emp1"), Var[Employee]("emp2"))))
 
         self.assertGreater(len(colleagues_after), 0)
         self.assertEqual(len(test_teammates_after), 0)  # Temporary rule should be gone

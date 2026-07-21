@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 from django.test import TestCase
 
-from django_datalog.models import Fact, Var, query, rule, store_facts
+from django_datalog.models import Fact, Term, Var, query, rule, store_facts
 from testdjdatalog.models import Person
 
 
@@ -14,40 +14,40 @@ from testdjdatalog.models import Person
 class IsOwner(Fact, inferred=True):
     """Owner relationship for operator tests."""
 
-    subject: Person | Var
-    object: Person | Var  # Using Person as resource for simplicity
+    subject: Term[Person]
+    object: Term[Person]  # Using Person as resource for simplicity
 
 
 @dataclass
 class IsAdmin(Fact, inferred=True):
     """Admin relationship for operator tests."""
 
-    subject: Person | Var
-    object: Person | Var
+    subject: Term[Person]
+    object: Term[Person]
 
 
 @dataclass
 class MemberOf(Fact, inferred=True):
     """Team membership for operator tests."""
 
-    subject: Person | Var
-    object: Person | Var  # Person as team
+    subject: Term[Person]
+    object: Term[Person]  # Person as team
 
 
 @dataclass
 class TeamOwns(Fact, inferred=True):
     """Team ownership for operator tests."""
 
-    subject: Person | Var  # Team
-    object: Person | Var  # Resource
+    subject: Term[Person]  # Team
+    object: Term[Person]  # Resource
 
 
 @dataclass
 class HasAccess(Fact, inferred=True):
     """User has access to a resource (inferred fact for operator tests)."""
 
-    subject: Person | Var
-    object: Person | Var
+    subject: Term[Person]
+    object: Term[Person]
 
 
 class OperatorSyntaxTests(TestCase):
@@ -150,16 +150,17 @@ class OperatorSyntaxTests(TestCase):
 
         # Rule using | operator: HasAccess if person is parent OR grandparent
         rule(
-            HasAccess(Var("user"), Var("resource")),
-            ParentOf(Var("user"), Var("resource")) | ParentOf(Var("resource"), Var("user")),
+            HasAccess(Var[Person]("user"), Var[Person]("resource")),
+            ParentOf(Var[Person]("user"), Var[Person]("resource"))
+            | ParentOf(Var[Person]("resource"), Var[Person]("user")),
         )
 
         # Rule using & operator: HasAccess if both are people (using ParentOf in both directions)
         # This is a bit contrived but shows the & operator working
         rule(
-            HasAccess(Var("user"), Var("resource")),
-            ParentOf(Var("user"), Var("intermediate"))
-            & ParentOf(Var("intermediate"), Var("resource")),
+            HasAccess(Var[Person]("user"), Var[Person]("resource")),
+            ParentOf(Var[Person]("user"), Var[Person]("intermediate"))
+            & ParentOf(Var[Person]("intermediate"), Var[Person]("resource")),
         )
 
         # Store facts using Person as both parent and child for simplicity
@@ -171,7 +172,7 @@ class OperatorSyntaxTests(TestCase):
         )
 
         # Query for access
-        results = list(query(HasAccess(Var("user"), Var("resource"))))
+        results = list(query(HasAccess(Var[Person]("user"), Var[Person]("resource"))))
 
         # Should have access facts inferred:
         # - Alice->document (parent)

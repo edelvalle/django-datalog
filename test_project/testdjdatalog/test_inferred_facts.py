@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 from django.test import TestCase
 
-from django_datalog.models import Fact, Var, query, rule, store_facts
+from django_datalog.models import Fact, Term, Var, query, rule, store_facts
 from testdjdatalog.models import Person, PersonWorksFor
 
 
@@ -14,8 +14,8 @@ from testdjdatalog.models import Person, PersonWorksFor
 class HasDirectAccess(Fact, inferred=True):
     """Person has direct access to a company (inferred-only fact)."""
 
-    subject: Person | Var
-    object: Person | Var  # Using Person for simplicity in tests
+    subject: Term[Person]
+    object: Term[Person]  # Using Person for simplicity in tests
 
 
 class InferredFactsTests(TestCase):
@@ -49,9 +49,9 @@ class InferredFactsTests(TestCase):
         from testdjdatalog.models import ParentOf
 
         rule(
-            HasDirectAccess(Var("child"), Var("parent")),
+            HasDirectAccess(Var[Person]("child"), Var[Person]("parent")),
             ParentOf(
-                Var("parent"), Var("child")
+                Var[Person]("parent"), Var[Person]("child")
             ),  # If parent->child, then child has access to parent
         )
 
@@ -62,7 +62,7 @@ class InferredFactsTests(TestCase):
         )
 
         # Query inferred facts
-        results = list(query(HasDirectAccess(Var("user"), Var("target"))))
+        results = list(query(HasDirectAccess(Var[Person]("user"), Var[Person]("target"))))
 
         # Should have 2 HasDirectAccess facts inferred from ParentOf facts
         self.assertEqual(len(results), 2)
@@ -77,7 +77,7 @@ class InferredFactsTests(TestCase):
     def test_basic_query_without_rules(self):
         """Test that inferred facts return empty when no rules are defined."""
         # Query inferred facts without any rules
-        results = list(query(HasDirectAccess(Var("user"), Var("target"))))
+        results = list(query(HasDirectAccess(Var[Person]("user"), Var[Person]("target"))))
 
         # Should have no results since no rules are defined
         self.assertEqual(len(results), 0)

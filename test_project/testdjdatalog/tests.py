@@ -72,7 +72,7 @@ class DjdatalogIntegrationTest(TransactionTestCase):
         )
 
         # Query who works for Tech Corp
-        tech_corp_employees = list(query(WorksFor(Var("employee"), self.tech_corp)))
+        tech_corp_employees = list(query(WorksFor(Var[Employee]("employee"), self.tech_corp)))
         self.assertEqual(len(tech_corp_employees), 2)
 
         employee_names = {result["employee"].user.username for result in tech_corp_employees}
@@ -88,7 +88,7 @@ class DjdatalogIntegrationTest(TransactionTestCase):
         )
 
         # Query for managers only
-        managers = list(query(WorksFor(Var("employee", where=Q(is_manager=True)), self.tech_corp)))
+        managers = list(query(WorksFor(Var[Employee]("employee", where=Q(is_manager=True)), self.tech_corp)))
 
         self.assertEqual(len(managers), 1)  # Only Alice is a manager
         self.assertEqual(managers[0]["employee"], self.emp_alice)
@@ -116,7 +116,7 @@ class DjdatalogIntegrationTest(TransactionTestCase):
         )
 
         # Combine django_datalog query with Django ORM
-        fact_results = list(query(WorksFor(Var("employee"), self.tech_corp)))
+        fact_results = list(query(WorksFor(Var[Employee]("employee"), self.tech_corp)))
         employee_from_fact = fact_results[0]["employee"]
 
         # Use Django ORM on the result
@@ -140,7 +140,7 @@ class DjdatalogIntegrationTest(TransactionTestCase):
 
         # Query should be efficient - limit database queries
         with self.assertNumQueries(6):  # Improved performance with targeted fact loading
-            results = list(query(WorksFor(Var("employee"), self.tech_corp)))
+            results = list(query(WorksFor(Var[Employee]("employee"), self.tech_corp)))
             # Access related data to test for N+1 issues
             for result in results:
                 _ = result["employee"].user.username
@@ -168,7 +168,7 @@ class SimpleEndToEndTest(TransactionTestCase):
         store_facts(WorksFor(subject=employee, object=company))
 
         # 3. Query facts
-        results = list(query(WorksFor(Var("emp"), company)))
+        results = list(query(WorksFor(Var[Employee]("emp"), company)))
 
         # 4. Verify results
         self.assertEqual(len(results), 1)

@@ -34,7 +34,7 @@ from dataclasses import dataclass
 
 from django.test import TestCase
 
-from django_datalog.models import Fact, Var, query, rule, rule_context, store_facts
+from django_datalog.models import Fact, Term, Var, query, rule, rule_context, store_facts
 from testdjdatalog.models import IsAdmin, IsManager, ParentOf, Person
 
 
@@ -42,16 +42,16 @@ from testdjdatalog.models import IsAdmin, IsManager, ParentOf, Person
 class HasAuthority(Fact, inferred=True):
     """Person has authority over another person (inferred-only)."""
 
-    subject: Person | Var
-    object: Person | Var
+    subject: Term[Person]
+    object: Term[Person]
 
 
 @dataclass
 class CanEdit(Fact, inferred=True):
     """Person can edit another person's data (inferred-only)."""
 
-    subject: Person | Var
-    object: Person | Var
+    subject: Term[Person]
+    object: Term[Person]
 
 
 class DisjunctiveRulesTests(TestCase):
@@ -70,10 +70,10 @@ class DisjunctiveRulesTests(TestCase):
         """Test a simple disjunctive rule with two alternatives."""
         # Rule: HasAuthority(user, target) :- IsManager(user, target) OR IsAdmin(user, target)
         rule(
-            HasAuthority(Var("user"), Var("target")),
+            HasAuthority(Var[Person]("user"), Var[Person]("target")),
             [
-                IsManager(Var("user"), Var("target")),  # Alternative 1: Manager relationship
-                IsAdmin(Var("user"), Var("target")),  # Alternative 2: Admin relationship
+                IsManager(Var[Person]("user"), Var[Person]("target")),  # Alternative 1: Manager relationship
+                IsAdmin(Var[Person]("user"), Var[Person]("target")),  # Alternative 2: Admin relationship
             ],
         )
 
@@ -84,7 +84,7 @@ class DisjunctiveRulesTests(TestCase):
         )
 
         # Query inferred facts
-        results = list(query(HasAuthority(Var("user"), Var("target"))))
+        results = list(query(HasAuthority(Var[Person]("user"), Var[Person]("target"))))
 
         # Should have 2 HasAuthority facts from both alternatives
         self.assertEqual(len(results), 2)
@@ -100,12 +100,12 @@ class DisjunctiveRulesTests(TestCase):
         #   IsAdmin(user, target) OR
         #   [IsManager(user, target) AND ParentOf(user, target)]
         rule(
-            CanEdit(Var("user"), Var("target")),
+            CanEdit(Var[Person]("user"), Var[Person]("target")),
             [
-                IsAdmin(Var("user"), Var("target")),  # Alternative 1: Admin
+                IsAdmin(Var[Person]("user"), Var[Person]("target")),  # Alternative 1: Admin
                 (  # Alternative 2: Manager AND Parent
-                    IsManager(Var("user"), Var("target")),
-                    ParentOf(Var("user"), Var("target")),
+                    IsManager(Var[Person]("user"), Var[Person]("target")),
+                    ParentOf(Var[Person]("user"), Var[Person]("target")),
                 ),
             ],
         )
@@ -118,7 +118,7 @@ class DisjunctiveRulesTests(TestCase):
         )
 
         # Query inferred facts
-        results = list(query(CanEdit(Var("user"), Var("target"))))
+        results = list(query(CanEdit(Var[Person]("user"), Var[Person]("target"))))
 
         # Should have 2 CanEdit facts:
         # - Alice->Bob (admin)
@@ -139,15 +139,15 @@ class DisjunctiveRulesTests(TestCase):
         #   [IsManager(user, target) AND IsAdmin(user, target)] OR
         #   [ParentOf(user, target) AND IsManager(user, other)]
         rule(
-            HasAuthority(Var("user"), Var("target")),
+            HasAuthority(Var[Person]("user"), Var[Person]("target")),
             [
                 (  # Alternative 1
-                    IsManager(Var("user"), Var("target")),
-                    IsAdmin(Var("user"), Var("target")),
+                    IsManager(Var[Person]("user"), Var[Person]("target")),
+                    IsAdmin(Var[Person]("user"), Var[Person]("target")),
                 ),
                 (  # Alternative 2
-                    ParentOf(Var("user"), Var("target")),
-                    IsManager(Var("user"), Var("other")),  # User must be manager of someone
+                    ParentOf(Var[Person]("user"), Var[Person]("target")),
+                    IsManager(Var[Person]("user"), Var[Person]("other")),  # User must be manager of someone
                 ),
             ],
         )
@@ -161,7 +161,7 @@ class DisjunctiveRulesTests(TestCase):
         )
 
         # Query inferred facts
-        results = list(query(HasAuthority(Var("user"), Var("target"))))
+        results = list(query(HasAuthority(Var[Person]("user"), Var[Person]("target"))))
 
         # Should have 2 HasAuthority facts:
         # - Alice->Bob (manager AND admin)
