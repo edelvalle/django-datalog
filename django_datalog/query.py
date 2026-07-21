@@ -7,6 +7,7 @@ from collections.abc import Iterator
 from dataclasses import fields
 from typing import Any
 
+from asgiref.sync import sync_to_async
 from django.db.models import Q
 
 from .facts import Fact
@@ -59,6 +60,30 @@ def query(*fact_patterns: Fact, hydrate: bool = True) -> Iterator[dict[str, Any]
     else:
         # Return PKs directly without hydration
         yield from pk_results
+
+
+async def aquery(*fact_patterns: Fact, hydrate: bool = True) -> list[dict[str, Any]]:
+    """Async counterpart of :func:`query`.
+
+    Runs the (synchronous) query engine in Django's thread-sensitive executor
+    so it shares the ORM connection context, and returns the results as a
+    list. Use it from async views/tasks::
+
+        results = await aquery(WorksFor(emp, company))
+
+    Args:
+        *fact_patterns: One or more fact patterns to match as a conjunction.
+        hydrate: If True (default), returns full model instances; if False, PKs.
+
+    Returns:
+        A list of dictionaries mapping variable names to their values.
+    """
+    return await sync_to_async(_query_to_list, thread_sensitive=True)(fact_patterns, hydrate)
+
+
+def _query_to_list(fact_patterns: tuple[Fact, ...], hydrate: bool) -> list[dict[str, Any]]:
+    """Materialize the query generator (runs inside the sync executor)."""
+    return list(query(*fact_patterns, hydrate=hydrate))
 
 
 def _satisfy_conjunction_with_targeted_facts(conditions, bindings, original_conditions=None) -> Iterator[dict[str, Any]]:

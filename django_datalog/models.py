@@ -6,7 +6,14 @@ specialized modules for facts, queries, and rules.
 """
 
 # Public API imports
-from django_datalog.facts import Fact, FactConjunction, retract_facts, store_facts
+from django_datalog.facts import (
+    Fact,
+    FactConjunction,
+    aretract_facts,
+    astore_facts,
+    retract_facts,
+    store_facts,
+)
 from django_datalog.optimizer import (
     get_optimizer_timing_stats,
     optimize_query,
@@ -14,7 +21,7 @@ from django_datalog.optimizer import (
     reset_optimizer_cache,
     time_fact_execution,
 )
-from django_datalog.query import _fact_to_django_query, _prefix_q_object, query
+from django_datalog.query import _fact_to_django_query, _prefix_q_object, aquery, query
 from django_datalog.rules import Rule, get_rules, rule, rule_context
 from django_datalog.variables import Term, Var
 
@@ -32,6 +39,10 @@ __all__ = [
     "query",
     "store_facts",
     "retract_facts",
+    # Async counterparts
+    "aquery",
+    "astore_facts",
+    "aretract_facts",
     "rule",
     "rule_context",
     "get_rules",

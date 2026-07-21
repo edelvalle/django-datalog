@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import Any, ClassVar, Self, dataclass_transform, get_type_hints
 
 import uuid6
+from asgiref.sync import sync_to_async
 from django.db import models
 
 
@@ -352,3 +353,13 @@ def retract_facts(*facts: Fact) -> None:
         for fact in fact_list:
             # Delete using Django model instances directly
             django_model.objects.filter(subject=fact.subject, object=fact.object).delete()
+
+
+async def astore_facts(*facts: Fact) -> None:
+    """Async counterpart of :func:`store_facts` (see it for semantics)."""
+    await sync_to_async(store_facts, thread_sensitive=True)(*facts)
+
+
+async def aretract_facts(*facts: Fact) -> None:
+    """Async counterpart of :func:`retract_facts` (see it for semantics)."""
+    await sync_to_async(retract_facts, thread_sensitive=True)(*facts)
