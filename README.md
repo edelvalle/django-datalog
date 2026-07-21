@@ -166,14 +166,14 @@ def test_something(self):
 
 ### Variables & Constraints
 ```python
-# Basic variable
-emp = Var("employee")
+# Basic variable (typed — only fits Employee slots)
+emp = Var[Employee]("employee")
 
 # With Django Q constraints
-senior_emp = Var("employee", where=Q(years_experience__gte=5))
+senior_emp = Var[Employee]("employee", where=Q(years_experience__gte=5))
 
 # Multiple constraints
-constrained = Var("emp", where=Q(is_active=True) & Q(department="Engineering"))
+constrained = Var[Employee]("emp", where=Q(is_active=True) & Q(department="Engineering"))
 
 # Cross-variable constraints (reference other variables)
 query(
@@ -255,21 +255,23 @@ class Project(models.Model):
     company = models.ForeignKey(Company, on_delete=models.CASCADE)
 
 class WorksFor(Fact):
-    subject: Employee | Var
-    object: Company | Var
+    subject: Term[Employee]
+    object: Term[Company]
 
 class WorksOn(Fact):
-    subject: Employee | Var  
-    object: Project | Var
+    subject: Term[Employee]
+    object: Term[Project]
 
 class ColleaguesOf(Fact, inferred=True):
-    subject: Employee | Var
-    object: Employee | Var
+    subject: Term[Employee]
+    object: Term[Employee]
 
 # rules.py
+emp1, emp2 = Var[Employee]("emp1"), Var[Employee]("emp2")
+company = Var[Company]("company")
 rule(
-    ColleaguesOf(Var("emp1"), Var("emp2")),
-    WorksFor(Var("emp1"), Var("company")) & WorksFor(Var("emp2"), Var("company"))
+    ColleaguesOf(emp1, emp2),
+    WorksFor(emp1, company) & WorksFor(emp2, company)
 )
 
 # usage.py
@@ -281,12 +283,13 @@ store_facts(
 )
 
 # Simple queries (automatically optimized)
-colleagues = query(ColleaguesOf(alice, Var("colleague")))
+colleagues = query(ColleaguesOf(alice, Var[Employee]("colleague")))
 
 # Complex cross-variable constraints (75% query reduction!)
+emp, company = Var[Employee]("emp"), Var[Company]("company")
 same_company_projects = query(
-    WorksFor(Var("emp"), Var("company")),
-    WorksOn(Var("emp"), Var("project", where=Q(company=Var("company"))))
+    WorksFor(emp, company),
+    WorksOn(emp, Var[Project]("project", where=Q(company=company)))
 )
 # ↑ Finds employees working on projects from their own company
 # Automatically converts to optimized Django ORM with EXISTS subqueries
@@ -311,8 +314,8 @@ class MyTest(TestCase):
 
 ## Requirements
 
-- Python 3.10+
-- Django 5.0+
+- Python 3.12+
+- Django 5.2 (LTS)
 
 ## License
 
