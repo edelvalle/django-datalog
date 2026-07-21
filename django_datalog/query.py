@@ -601,6 +601,12 @@ def _try_automatic_orm_conversion(conditions: list[Fact]) -> Iterator[dict[str, 
         fact_class = type(condition)
         if not hasattr(fact_class, '_django_model') or getattr(fact_class, 'inferred', False):
             raise NotImplementedError("ORM conversion only supports stored facts")
+        # The advanced analyzer models variable positions only; it does not
+        # apply a concrete (non-Var) subject/object as a filter. Defer such
+        # patterns to the fallback loader, which filters concrete values
+        # correctly, to avoid returning unfiltered rows.
+        if not isinstance(condition.subject, Var) or not isinstance(condition.object, Var):
+            raise NotImplementedError("ORM conversion only supports variable positions")
     
     # Try advanced AST-based analysis first
     try:
