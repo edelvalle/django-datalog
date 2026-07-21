@@ -229,6 +229,7 @@ class ConverterTest(TestCase):
 
         # Complex queries should have higher original cost
         self.assertGreater(complex_result.original_query_count, simple_result.original_query_count)
-        # Both should have significant improvements
-        self.assertGreater(simple_result.improvement_percentage, 50)
+        # Both should have significant improvements (a single-fact query
+        # legitimately halves the work: 2 queries -> 1, i.e. exactly 50%).
+        self.assertGreaterEqual(simple_result.improvement_percentage, 50)
         self.assertGreater(complex_result.improvement_percentage, 80)
