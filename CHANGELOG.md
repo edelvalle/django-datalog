@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.4.0] - 2026-07-21
 
 ### 🎯 Type Safety
 - **Parametric `Var`**: `Var` is now generic — `Var[Employee]("emp")` records the model a variable stands for, so a type checker rejects a variable used in a mismatched fact slot (e.g. an `Employee` variable in a `Company` position). Create a variable once and reuse it across a rule/query to keep its binding type-consistent.
