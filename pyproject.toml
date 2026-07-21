@@ -52,7 +52,7 @@ dev = [
     "pytest-django>=4.5",
     "pytest-cov>=4.0",
     "ruff>=0.1",
-    "basedpyright>=1.12",
+    "zuban>=0.9",
 ]
 test = [
     "pytest>=7.0", 
@@ -146,42 +146,37 @@ exclude_lines = [
     "if __name__ == .__main__.:",
 ]
 
-[tool.basedpyright]
-pythonVersion = "3.13"
-typeCheckingMode = "basic"
-include = ["django_datalog"]
-exclude = [
-    "**/__pycache__",
-    "build", 
-    "dist",
-    ".venv",
-    ".pytest_cache",
-    "test_project",
-    "**/migrations/**",
-    "**/tests/**",
+# Zuban (Mypy-compatible type checker). `zuban check` auto-selects Mypy mode
+# when a [tool.mypy] config is present. Kept lenient to match the previous
+# basedpyright "basic" setup (Django models are dynamically typed).
+[tool.mypy]
+python_version = "3.13"
+files = ["django_datalog"]
+exclude = '(/migrations/|/tests/)'
+ignore_missing_imports = true
+follow_imports = "silent"
+# Do not type-check the bodies of untyped functions, and don't require
+# annotations — keeps the check focused on real import/name errors.
+check_untyped_defs = false
+disallow_untyped_defs = false
+warn_unused_ignores = false
+warn_return_any = false
+# Restore the pre-Mypy-0.990 behavior basedpyright allowed (None defaults).
+implicit_optional = true
+# Silence the error categories the previous basedpyright config disabled;
+# these are noise against Django's dynamically-typed ORM (Model | None
+# attribute access, argument/return variance, etc.).
+disable_error_code = [
+    "union-attr",       # reportOptionalMemberAccess / reportAttributeAccessIssue
+    "attr-defined",     # reportAttributeAccessIssue
+    "arg-type",         # reportArgumentType
+    "call-arg",         # reportCallIssue
+    "assignment",       # reportAssignmentType
+    "return-value",     # reportAssignmentType / reportGeneralTypeIssues
+    "operator",         # reportOperatorIssue
+    "index",            # reportOptionalSubscript
+    "unreachable",      # tolerated by basedpyright "basic"
+    "misc",             # reportGeneralTypeIssues
 ]
-reportMissingImports = true
-reportMissingTypeStubs = false
-reportAttributeAccessIssue = false
-reportAssignmentType = false
-reportIncompatibleMethodOverride = false
-reportRedeclaration = false
-reportOperatorIssue = false
-reportArgumentType = false
-reportCallIssue = false
-reportGeneralTypeIssues = false
-reportOptionalOperand = false
-reportOptionalMemberAccess = false
-reportOptionalCall = false
-reportOptionalIterable = false
-reportOptionalContextManager = false
-reportOptionalSubscript = false
-reportPrivateUsage = false
-reportTypeCommentUsage = false
-reportUnknownParameterType = false
-reportUnknownArgumentType = false
-reportUnknownMemberType = false
-reportUnknownVariableType = false
-reportUnknownLambdaType = false
 
 

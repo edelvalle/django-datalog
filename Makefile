@@ -1,4 +1,4 @@
-.PHONY: help install test lint ruff pyright format check clean build publish
+.PHONY: help install test lint ruff typecheck format check clean build publish
 
 help: ## Show this help message
 	@echo "django-datalog development commands:"
@@ -10,16 +10,16 @@ install: ## Install development dependencies
 test: ## Run Django tests
 	cd test_project && uv run python manage.py test testdjdatalog -v 2
 
-lint: ## Run linting tools (ruff, basedpyright)
+lint: ## Run linting tools (ruff, zuban)
 	uv run ruff check django_datalog/
-	uv run basedpyright django_datalog/
+	uv run zuban check django_datalog/
 	@echo "✅ Linting passed"
 
 ruff: ## Run ruff linter only
 	uv run ruff check django_datalog/
 
-pyright: ## Run basedpyright type checker
-	uv run basedpyright django_datalog/
+typecheck: ## Run zuban type checker
+	uv run zuban check django_datalog/
 
 format: ## Auto-format code with ruff (includes import sorting)
 	uv run ruff check --fix --unsafe-fixes django_datalog/

@@ -1,4 +1,4 @@
-.PHONY: help test lint ruff pyright format check clean reset-migrations
+.PHONY: help test lint ruff typecheck format check clean reset-migrations
 
 help: ## Show this help message
 	@echo "Test project development commands:"
@@ -14,16 +14,16 @@ reset-migrations: ## Delete and recreate migrations
 	PYTHONPATH=.. uv run python manage.py makemigrations testdjdatalog
 	@echo "✅ Migrations reset and recreated"
 
-lint: ## Run linting tools (ruff, basedpyright)
+lint: ## Run linting tools (ruff, zuban)
 	uv run --project .. ruff check testdjdatalog/ --exclude testdjdatalog/migrations/
-	uv run --project .. basedpyright testdjdatalog/
+	uv run --project .. zuban check testdjdatalog/
 	@echo "✅ Linting passed"
 
 ruff: ## Run ruff linter only
 	uv run --project .. ruff check testdjdatalog/ --exclude testdjdatalog/migrations/
 
-pyright: ## Run basedpyright type checker
-	uv run --project .. basedpyright testdjdatalog/
+typecheck: ## Run zuban type checker
+	uv run --project .. zuban check testdjdatalog/
 
 format: ## Auto-format code with ruff (includes import sorting)
 	uv run --project .. ruff check --fix --unsafe-fixes testdjdatalog/ --exclude testdjdatalog/migrations/

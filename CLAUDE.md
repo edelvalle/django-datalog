@@ -16,7 +16,7 @@ The project has two Makefiles:
 
 ### Root Level (Main Project)
 - `make test` - Run all tests using uv
-- `make lint` - Run linting (ruff + basedpyright)  
+- `make lint` - Run linting (ruff + zuban)  
 - `make format` - Auto-format code with ruff
 - `make check` - Run format, lint, and test in sequence
 - `make build` - Build the package
