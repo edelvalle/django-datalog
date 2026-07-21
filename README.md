@@ -146,6 +146,26 @@ results = list(query(
 ))
 ```
 
+### Async interface
+Every read/write has an `a`-prefixed async counterpart — `aquery`,
+`astore_facts`, and `aretract_facts` — for use from async views and tasks.
+They mirror the sync API exactly and run the engine in Django's
+thread-sensitive executor, so they share the ORM connection context:
+
+```python
+from django_datalog.models import aquery, astore_facts, aretract_facts, Var
+
+async def handler(request):
+    await astore_facts(WorksFor(alice, tech_corp))
+
+    # aquery awaits and returns a list (already materialized)
+    results = await aquery(
+        WorksFor(Var[Employee]("emp"), Var[Company]("company")),
+    )
+
+    await aretract_facts(WorksFor(alice, tech_corp))
+```
+
 ### Rule Context
 Isolate rules for testing or temporary logic:
 
