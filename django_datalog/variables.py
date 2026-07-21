@@ -7,8 +7,21 @@ from typing import Any
 
 
 @dataclass(slots=True)
-class Var:
-    """Variable placeholder for datalog queries."""
+class Var[T]:
+    """Typed variable placeholder for datalog queries.
+
+    The type parameter records what kind of value the variable stands for, so
+    a variable declared as ``Var[Employee]("emp")`` only fits into fact slots
+    that expect an ``Employee``. Reuse the same typed variable across the
+    conditions of a rule/query to keep the binding type-consistent::
+
+        emp = Var[Employee]("emp")
+        company = Var[Company]("company")
+        query(WorksFor(emp, company))
+
+    Bare ``Var("emp")`` remains valid (inferred from the slot it is passed to),
+    so the type parameter is opt-in and fully backward compatible.
+    """
 
     name: str
     where: Any = None  # Q object for additional constraints
@@ -17,6 +30,12 @@ class Var:
         if self.where is not None:
             return f"Var({self.name!r}, where={self.where!r})"
         return f"Var({self.name!r})"
+
+
+# A "term" in a fact slot is either a concrete value or a variable standing for
+# one. Use it in fact definitions: ``subject: Term[Employee]`` is exactly
+# ``Employee | Var[Employee]`` but keeps the model name from repeating.
+type Term[X] = X | Var[X]
 
 
 def has_variable_references(q_obj) -> bool:

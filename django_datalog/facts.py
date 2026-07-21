@@ -5,7 +5,7 @@ Fact system for djdatalog - handles fact definitions, storage, and retrieval.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, ClassVar, Self, get_type_hints
+from typing import Any, ClassVar, Self, dataclass_transform, get_type_hints
 
 import uuid6
 from django.db import models
@@ -112,9 +112,17 @@ class FactModel(models.Model):
         unique_together = (("subject", "object"),)
 
 
+@dataclass_transform(eq_default=False)
 @dataclass(eq=False)  # Disable auto-generated __eq__
 class Fact:
-    """Base class for all datalog facts."""
+    """Base class for all datalog facts.
+
+    Decorated with ``@dataclass_transform`` so type checkers treat every
+    subclass as a dataclass and synthesize an ``__init__`` from its annotated
+    ``subject``/``object`` slots -- even though the actual ``@dataclass`` is
+    applied dynamically in ``__init_subclass__``. That is what lets a typed
+    ``Var[Employee]`` be checked against a ``subject: Term[Employee]`` slot.
+    """
 
     subject: Any
     object: Any
@@ -182,15 +190,21 @@ class Fact:
 
     @classmethod
     def _extract_django_model_from_annotation(cls, type_annotation):
-        """Extract Django model type from Union annotation like 'User | Var'."""
-        if hasattr(type_annotation, "__args__"):
-            # Handle Union types (User | Var)
-            for arg_type in type_annotation.__args__:
-                if hasattr(arg_type, "_meta") and hasattr(arg_type._meta, "app_label"):
-                    return arg_type
-        elif hasattr(type_annotation, "_meta") and hasattr(type_annotation._meta, "app_label"):
-            # Direct Django model reference
+        """Extract the Django model type from a fact-slot annotation.
+
+        Handles ``User | Var``, the typed ``Employee | Var[Employee]``, the
+        ``Term[Employee]`` alias, and multi-model slots like
+        ``Term[Department] | Term[Project]`` by recursing through unions and
+        generic/alias ``__args__`` until a concrete Django model is found.
+        """
+        # Direct Django model reference
+        if hasattr(type_annotation, "_meta") and hasattr(type_annotation._meta, "app_label"):
             return type_annotation
+        # Unwrap unions, generic aliases (Var[X]) and Term aliases by scanning args
+        for arg_type in getattr(type_annotation, "__args__", ()):
+            found = cls._extract_django_model_from_annotation(arg_type)
+            if found is not None:
+                return found
         return None
 
     def __hash__(self):

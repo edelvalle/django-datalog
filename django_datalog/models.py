@@ -16,7 +16,7 @@ from django_datalog.optimizer import (
 )
 from django_datalog.query import _fact_to_django_query, _prefix_q_object, query
 from django_datalog.rules import Rule, get_rules, rule, rule_context
-from django_datalog.variables import Var
+from django_datalog.variables import Term, Var
 
 # django_datalog is a library package - storage models should be defined by consuming applications
 
@@ -26,6 +26,7 @@ __all__ = [
     "Fact",
     "FactConjunction",
     "Var",
+    "Term",
     "Rule",
     # Core functions
     "query",
