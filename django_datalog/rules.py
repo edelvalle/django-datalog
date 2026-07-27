@@ -146,6 +146,7 @@ def apply_rules(base_facts: list[Fact]) -> list[Fact]:
         Set of all facts (base + inferred)
     """
     all_facts = base_facts[:]
+    seen = set(all_facts)  # O(1) membership; facts are hashable by type + pks
     changed = True
     max_iterations = 100  # Prevent infinite loops
     iterations = 0
@@ -158,7 +159,8 @@ def apply_rules(base_facts: list[Fact]) -> list[Fact]:
             # Try to apply this rule
             new_facts = _apply_single_rule(rule_obj, all_facts)
             for new_fact in new_facts:
-                if new_fact not in all_facts:
+                if new_fact not in seen:
+                    seen.add(new_fact)
                     all_facts.append(new_fact)
                     changed = True
 
@@ -177,6 +179,7 @@ def apply_targeted_rules(target_rules: list, base_facts: list[Fact]) -> list[Fac
         Set of all facts (base + inferred from target rules only)
     """
     all_facts = base_facts[:]
+    seen = set(all_facts)  # O(1) membership; facts are hashable by type + pks
     changed = True
     max_iterations = 100  # Prevent infinite loops
     iterations = 0
@@ -189,7 +192,8 @@ def apply_targeted_rules(target_rules: list, base_facts: list[Fact]) -> list[Fac
             # Try to apply this rule
             new_facts = _apply_single_rule(rule_obj, all_facts)
             for new_fact in new_facts:
-                if new_fact not in all_facts:
+                if new_fact not in seen:
+                    seen.add(new_fact)
                     all_facts.append(new_fact)
                     changed = True
 
@@ -199,18 +203,19 @@ def apply_targeted_rules(target_rules: list, base_facts: list[Fact]) -> list[Fac
 def _apply_single_rule(rule_obj: Rule, known_facts: list[Fact]) -> list[Fact]:
     """Apply a single rule to known facts to derive new facts."""
     new_facts = []
-
-    # known_facts is already a list
-    fact_list = known_facts
+    local_seen: set = set()  # dedup within this rule's output in O(1)
 
     # Try to find all possible variable bindings that satisfy the rule body
-    bindings_list = _find_all_bindings(rule_obj.body, fact_list)
+    bindings_list = _find_all_bindings(rule_obj.body, known_facts)
 
-    # For each valid binding, instantiate the rule head to create a new fact
+    # For each valid binding, instantiate the rule head to create a new fact.
+    # Membership against the already-known facts is handled by the caller's
+    # `seen` set, so we only guard against duplicates within this output.
     for bindings in bindings_list:
         try:
             new_fact = _instantiate_fact(rule_obj.head, bindings)
-            if new_fact and new_fact not in known_facts and new_fact not in new_facts:
+            if new_fact is not None and new_fact not in local_seen:
+                local_seen.add(new_fact)
                 new_facts.append(new_fact)
         except Exception:
             # Skip invalid instantiations
