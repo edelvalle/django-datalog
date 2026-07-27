@@ -136,96 +136,80 @@ def get_rules() -> list[Rule]:
 
 
 def apply_rules(base_facts: list[Fact]) -> list[Fact]:
-    """
-    Apply inference rules to derive new facts from base facts.
-
-    Args:
-        base_facts: Set of known facts
-
-    Returns:
-        Set of all facts (base + inferred)
-    """
-    all_facts = base_facts[:]
-    seen = set(all_facts)  # O(1) membership; facts are hashable by type + pks
-    changed = True
-    max_iterations = 100  # Prevent infinite loops
-    iterations = 0
-
-    while changed and iterations < max_iterations:
-        changed = False
-        iterations += 1
-
-        for rule_obj in _rules:
-            # Try to apply this rule
-            new_facts = _apply_single_rule(rule_obj, all_facts)
-            for new_fact in new_facts:
-                if new_fact not in seen:
-                    seen.add(new_fact)
-                    all_facts.append(new_fact)
-                    changed = True
-
-    return all_facts
+    """Apply all registered inference rules to derive new facts (base + inferred)."""
+    return _seminaive_fixpoint(_rules, base_facts)
 
 
 def apply_targeted_rules(target_rules: list, base_facts: list[Fact]) -> list[Fact]:
-    """
-    Apply only specific rules to derive new facts from base facts.
+    """Apply only the given rules to derive new facts (base + inferred)."""
+    return _seminaive_fixpoint(target_rules, base_facts)
 
-    Args:
-        target_rules: List of specific rules to apply
-        base_facts: Set of known facts
 
-    Returns:
-        Set of all facts (base + inferred from target rules only)
+def _seminaive_fixpoint(rule_list: list, base_facts: list[Fact]) -> list[Fact]:
+    """Semi-naïve fixpoint evaluation.
+
+    Each round joins only against the facts derived in the previous round (the
+    "delta"), so a rule fires on genuinely new information rather than
+    re-deriving the whole extension every iteration. The loop ends when a round
+    produces nothing new; there is no iteration cap, so transitive closures of
+    any depth are computed to completion (the domain is finite, so it always
+    terminates).
     """
-    all_facts = base_facts[:]
+    all_facts = list(base_facts)
     seen = set(all_facts)  # O(1) membership; facts are hashable by type + pks
-    changed = True
-    max_iterations = 100  # Prevent infinite loops
-    iterations = 0
+    delta = list(base_facts)  # round 0: every base fact is "new"
 
-    while changed and iterations < max_iterations:
-        changed = False
-        iterations += 1
-
-        for rule_obj in target_rules:
-            # Try to apply this rule
-            new_facts = _apply_single_rule(rule_obj, all_facts)
-            for new_fact in new_facts:
-                if new_fact not in seen:
-                    seen.add(new_fact)
-                    all_facts.append(new_fact)
-                    changed = True
+    while delta:
+        round_new: list[Fact] = []
+        round_seen: set = set()
+        for rule_obj in rule_list:
+            for fact in _apply_rule_delta(rule_obj, all_facts, delta):
+                if fact not in seen and fact not in round_seen:
+                    round_seen.add(fact)
+                    round_new.append(fact)
+        all_facts.extend(round_new)
+        seen.update(round_new)
+        delta = round_new
 
     return all_facts
 
 
-def _apply_single_rule(rule_obj: Rule, known_facts: list[Fact]) -> list[Fact]:
-    """Apply a single rule to known facts to derive new facts."""
+def _apply_rule_delta(rule_obj: Rule, all_facts: list[Fact], delta: list[Fact]) -> list[Fact]:
+    """Derive facts from a rule where at least one body condition matches the delta.
+
+    For each body position i, the join uses `delta` for condition i and
+    `all_facts` for the rest; the union over all i is exactly the derivations
+    that consume at least one newly-derived fact. Duplicates within this call
+    are removed; membership against previously-known facts is the caller's job.
+    """
+    body = rule_obj.body
     new_facts = []
-    local_seen: set = set()  # dedup within this rule's output in O(1)
+    local_seen: set = set()
 
-    # Try to find all possible variable bindings that satisfy the rule body
-    bindings_list = _find_all_bindings(rule_obj.body, known_facts)
-
-    # For each valid binding, instantiate the rule head to create a new fact.
-    # Membership against the already-known facts is handled by the caller's
-    # `seen` set, so we only guard against duplicates within this output.
-    for bindings in bindings_list:
-        try:
-            new_fact = _instantiate_fact(rule_obj.head, bindings)
+    for i in range(len(body)):
+        sources = [all_facts] * len(body)
+        sources[i] = delta
+        for bindings in _find_all_bindings_multi(body, sources):
+            try:
+                new_fact = _instantiate_fact(rule_obj.head, bindings)
+            except Exception:
+                continue
             if new_fact is not None and new_fact not in local_seen:
                 local_seen.add(new_fact)
                 new_facts.append(new_fact)
-        except Exception:
-            # Skip invalid instantiations
-            continue
 
     return new_facts
 
 
 def _find_all_bindings(conditions: list[Any], known_facts: list[Fact]) -> list[dict[str, Any]]:
-    """Find all variable bindings that satisfy all conditions.
+    """Find all variable bindings satisfying all conditions against one fact set."""
+    return _find_all_bindings_multi(conditions, [known_facts] * len(conditions))
+
+
+def _find_all_bindings_multi(
+    conditions: list[Any], sources: list[list[Fact]]
+) -> list[dict[str, Any]]:
+    """Find all bindings satisfying the conditions, condition i drawn from sources[i].
 
     Conditions are joined left-to-right with a hash join on the variables they
     share, so an N-condition body over M facts costs O(M + matches) per join
@@ -234,11 +218,11 @@ def _find_all_bindings(conditions: list[Any], known_facts: list[Fact]) -> list[d
     if not conditions:
         return [{}]  # Empty binding for empty conditions
 
-    result = _find_bindings_for_condition(conditions[0], known_facts)
-    for condition in conditions[1:]:
+    result = _find_bindings_for_condition(conditions[0], sources[0])
+    for i in range(1, len(conditions)):
         if not result:
             break  # nothing left to extend
-        result = _join_bindings(result, _find_bindings_for_condition(condition, known_facts))
+        result = _join_bindings(result, _find_bindings_for_condition(conditions[i], sources[i]))
     return result
 
 
