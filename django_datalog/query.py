@@ -215,43 +215,158 @@ def _free_inferred_pattern(fact_type: type) -> Fact:
     return fact_type(subject=Var("_s"), object=Var("_o"))
 
 
+def _target_has_concrete_position(pattern: Fact) -> bool:
+    """True if the query pins subject or object to a concrete value."""
+    return not isinstance(pattern.subject, Var) or not isinstance(pattern.object, Var)
+
+
+def _unify_head_with_target(head: Fact, target: Fact) -> dict[str, Any]:
+    """Map rule-head variable names to the target pattern's value at that position."""
+    substitution = {}
+    if isinstance(head.subject, Var):
+        substitution[head.subject.name] = target.subject
+    if isinstance(head.object, Var):
+        substitution[head.object.name] = target.object
+    return substitution
+
+
+def _apply_head_sub_to_condition(condition: Fact, head_sub: dict[str, Any]) -> Fact:
+    """Rewrite a body condition's head variables to the target's values."""
+
+    def build(pos):
+        if isinstance(pos, Var):
+            return head_sub.get(pos.name, pos)
+        return pos
+
+    return type(condition)(subject=build(condition.subject), object=build(condition.object))
+
+
+def _canonicalize_position(pos, head_sub: dict[str, Any]):
+    """Resolve a condition position to ('const', value) or ('var', name, where).
+
+    Head variables are rewritten to the target's value (a concrete value pins
+    the position; a target variable keeps it free under that variable's name).
+    """
+    if isinstance(pos, Var):
+        mapped = head_sub.get(pos.name, pos)
+        if isinstance(mapped, Var):
+            return ("var", mapped.name, pos.where)
+        return ("const", mapped)
+    return ("const", pos)
+
+
+def _bound_score(condition: Fact, head_sub: dict[str, Any], env: dict[str, set]) -> int:
+    """How many of this condition's positions are already bound (const or in env)."""
+    score = 0
+    for pos in (condition.subject, condition.object):
+        canon = _canonicalize_position(pos, head_sub)
+        if canon[0] == "const" or (canon[0] == "var" and canon[1] in env):
+            score += 1
+    return score
+
+
+def _sip_load_pattern(condition: Fact, head_sub: dict[str, Any], env: dict[str, set]) -> Fact:
+    """Build a stored-fact load pattern with head substitution + `pk__in` pushdown."""
+
+    def build(pos):
+        canon = _canonicalize_position(pos, head_sub)
+        if canon[0] == "const":
+            return canon[1]
+        _, name, where = canon
+        constraint = where
+        if name in env:
+            in_q = Q(pk__in=list(env[name]))
+            constraint = in_q if constraint is None else (constraint & in_q)
+        return Var(name, where=constraint)
+
+    return type(condition)(subject=build(condition.subject), object=build(condition.object))
+
+
+def _gather_env(
+    condition: Fact, rows: list[Fact], head_sub: dict[str, Any], env: dict[str, set]
+) -> None:
+    """Record the pk values each join variable took, intersecting with prior candidates."""
+    for pos, attr in ((condition.subject, "subject"), (condition.object, "object")):
+        canon = _canonicalize_position(pos, head_sub)
+        if canon[0] != "var":
+            continue
+        name = canon[1]
+        values = {getattr(getattr(r, attr), "pk", getattr(r, attr)) for r in rows}
+        env[name] = values if name not in env else (env[name] & values)
+
+
 def _build_targeted_fact_base_for_rules(
     rules, target_pattern: Fact, _resolving: frozenset = frozenset(), _memo: dict | None = None
 ) -> list[Fact]:
-    """Build a targeted fact base using hidden variables to avoid bulk loading.
+    """Build a targeted fact base for the rules that derive ``target_pattern``.
 
-    Inferred body conditions are resolved *transitively* (their stored facts
-    plus their own rules) so inference chains through multiple rule levels.
-    A body condition whose type is already being resolved is left to the
-    fixpoint in ``apply_targeted_rules`` (this is how recursive rules grow),
-    which keeps recursion terminating.
+    - Inferred body conditions are resolved *transitively* (their stored facts
+      plus their own rules) so inference chains across rule levels; a condition
+      whose type is already being resolved is left to the fixpoint (recursion).
+    - When the query pins a position (a concrete subject/object), stored body
+      conditions are loaded with sideways-information-passing: bound positions
+      are pushed into the DB filter and join-variable values gathered from one
+      condition constrain (`pk__in`) the next, so the base stays proportional to
+      the query's neighbourhood instead of the whole relation.
     """
     if _memo is None:
         _memo = {}
     target_type = type(target_pattern)
     resolving = _resolving | {target_type}
+    use_sip = _target_has_concrete_position(target_pattern)
 
     targeted_facts = []
 
-    # For each rule, analyze what facts it needs and load them with constraints
     for rule in rules:
+        head_sub = _unify_head_with_target(rule.head, target_pattern) if use_sip else {}
+        # Pushing the query's head bindings into a recursive rule's body is
+        # unsound: the fixpoint re-instantiates the head with intermediate
+        # values, so its conditions must see the full relation. Only push
+        # bindings (SIP / goal-directed sub-resolution) into non-recursive rules.
+        rule_is_recursive = any(type(c) in resolving for c in rule.body)
+        pushdown = use_sip and not rule_is_recursive
+
+        # 1) Inferred conditions: resolve transitively. When the rule is bound,
+        # resolve the *substituted* condition (goal-directed) so chained
+        # inference stays proportional to the query; otherwise resolve the full
+        # extension once and memoize it by type.
         for condition in rule.body:
             condition_type = type(condition)
-
-            if getattr(condition_type, "_is_inferred", False):
-                # Chained inference: resolve the inferred condition transitively
-                # rather than loading it as a (nonexistent) stored fact.
-                if condition_type in resolving:
-                    # Recursive reference - the fixpoint derives it from the
-                    # leaf facts already collected into the base.
-                    continue
+            if not getattr(condition_type, "_is_inferred", False):
+                continue
+            if condition_type in resolving:
+                continue  # recursive reference - grown by the fixpoint
+            sub_condition = _apply_head_sub_to_condition(condition, head_sub)
+            if pushdown and _target_has_concrete_position(sub_condition):
+                targeted_facts.extend(_get_facts_for_pattern(sub_condition, resolving, _memo))
+            else:
                 if condition_type not in _memo:
                     _memo[condition_type] = _get_facts_for_pattern(
                         _free_inferred_pattern(condition_type), resolving, _memo
                     )
                 targeted_facts.extend(_memo[condition_type])
-            else:
-                # Stored fact: load only the rows relevant to the target pattern.
+
+        # 2) Stored conditions.
+        stored = [c for c in rule.body if not getattr(type(c), "_is_inferred", False)]
+        if pushdown:
+            env: dict[str, set] = {}
+            remaining = stored[:]
+            while remaining:
+                # Load the most-bound condition next so bindings propagate outward.
+                remaining.sort(key=lambda c: _bound_score(c, head_sub, env), reverse=True)
+                condition = remaining.pop(0)
+                try:
+                    rows = _load_stored_facts_for_pattern(
+                        _sip_load_pattern(condition, head_sub, env)
+                    )
+                except Exception:
+                    rows = _load_stored_facts_for_pattern(
+                        _create_targeted_condition(condition, target_pattern)
+                    )
+                targeted_facts.extend(rows)
+                _gather_env(condition, rows, head_sub, env)
+        else:
+            for condition in stored:
                 targeted_condition = _create_targeted_condition(condition, target_pattern)
                 targeted_facts.extend(_load_stored_facts_for_pattern(targeted_condition))
 
