@@ -21,7 +21,14 @@ from django_datalog.optimizer import (
     reset_optimizer_cache,
     time_fact_execution,
 )
-from django_datalog.query import _fact_to_django_query, _prefix_q_object, aquery, query
+from django_datalog.query import (
+    _fact_to_django_query,
+    _prefix_q_object,
+    aas_queryset,
+    aquery,
+    as_queryset,
+    query,
+)
 from django_datalog.rules import Rule, get_rules, rule, rule_context
 from django_datalog.variables import Term, Var
 
@@ -43,6 +50,9 @@ __all__ = [
     "aquery",
     "astore_facts",
     "aretract_facts",
+    # Composable queryset entry points
+    "as_queryset",
+    "aas_queryset",
     "rule",
     "rule_context",
     "get_rules",

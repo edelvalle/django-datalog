@@ -86,6 +86,49 @@ def _query_to_list(fact_patterns: tuple[Fact, ...], hydrate: bool) -> list[dict[
     return list(query(*fact_patterns, hydrate=hydrate))
 
 
+def as_queryset(pattern: Fact, *, on: str = "object", model=None):
+    """Return a composable Django ``QuerySet`` for one side of an inferred query.
+
+    Resolves ``pattern`` through the datalog engine and returns
+    ``model.objects.filter(pk__in=<ids>)`` for the values bound at position
+    ``on`` (``"subject"`` or ``"object"``). The result is a lazy queryset the
+    caller can compose with the ORM, e.g. accessible vessels for a user::
+
+        Vessel.objects.filter(pk__in=...)  # via
+        qs = as_queryset(CanAccessVessel(user, Var("v")), on="object")
+        qs = qs.filter(active=True).order_by("name")
+
+    ``model`` defaults to the Django model declared for that position of the
+    fact. The matching ids are materialized once (cheap for bound queries);
+    the returned queryset itself is not evaluated until the caller uses it.
+    """
+    if on not in ("subject", "object"):
+        raise ValueError(f"`on` must be 'subject' or 'object', got {on!r}")
+
+    if model is None:
+        subject_model, object_model = _get_fact_field_types(type(pattern))
+        model = subject_model if on == "subject" else object_model
+        if model is None:
+            raise ValueError(
+                f"Could not infer a model for {type(pattern).__name__}.{on}; "
+                f"pass model=... explicitly."
+            )
+
+    position = getattr(pattern, on)
+    if isinstance(position, Var):
+        ids = {row[position.name] for row in query(pattern, hydrate=False)}
+    else:
+        # Position is already concrete - the id set is just that value.
+        ids = {getattr(position, "pk", position)}
+
+    return model.objects.filter(pk__in=ids)
+
+
+async def aas_queryset(pattern: Fact, *, on: str = "object", model=None):
+    """Async counterpart of :func:`as_queryset` (builds the queryset off-thread)."""
+    return await sync_to_async(as_queryset, thread_sensitive=True)(pattern, on=on, model=model)
+
+
 def _satisfy_conjunction_with_targeted_facts(conditions, bindings, original_conditions=None) -> Iterator[dict[str, Any]]:
     """Satisfy a conjunction using targeted fact loading - only load facts relevant to the query."""
     if original_conditions is None:
