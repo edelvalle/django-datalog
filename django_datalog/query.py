@@ -123,8 +123,22 @@ def _satisfy_conjunction_with_targeted_facts(conditions, bindings, original_cond
             yield from _satisfy_conjunction_with_targeted_facts(remaining, new_bindings, original_conditions)
 
 
-def _get_facts_for_pattern(pattern: Fact) -> list[Fact]:
-    """Get facts relevant to a specific pattern - both stored and inferred."""
+def _get_facts_for_pattern(
+    pattern: Fact,
+    _resolving: frozenset | None = None,
+    _memo: dict | None = None,
+) -> list[Fact]:
+    """Get facts relevant to a specific pattern - both stored and inferred.
+
+    ``_resolving`` holds the inferred fact types currently being resolved so
+    that recursive rules terminate; ``_memo`` caches each inferred type's full
+    extension for the duration of one top-level query.
+    """
+    if _resolving is None:
+        _resolving = frozenset()
+    if _memo is None:
+        _memo = {}
+
     # 1. Load stored facts that match this pattern type
     stored_facts = _load_stored_facts_for_pattern(pattern)
 
@@ -139,7 +153,9 @@ def _get_facts_for_pattern(pattern: Fact) -> list[Fact]:
         return stored_facts
 
     # 4. Apply targeted rule inference using hidden variables
-    inferred_facts = _apply_rules_with_hidden_variables(relevant_rules, pattern)
+    inferred_facts = _apply_rules_with_hidden_variables(
+        relevant_rules, pattern, _resolving, _memo
+    )
 
     # 5. Combine stored and inferred facts
     return stored_facts + inferred_facts
@@ -177,10 +193,14 @@ def _load_stored_facts_for_pattern(pattern: Fact) -> list[Fact]:
         return []
 
 
-def _apply_rules_with_hidden_variables(rules, target_pattern: Fact) -> list[Fact]:
+def _apply_rules_with_hidden_variables(
+    rules, target_pattern: Fact, _resolving: frozenset = frozenset(), _memo: dict | None = None
+) -> list[Fact]:
     """Apply rules using hidden variables to avoid bulk loading - reuse existing rule system."""
+    if _memo is None:
+        _memo = {}
     # Create a targeted fact base by loading only facts needed for these specific rules
-    targeted_facts = _build_targeted_fact_base_for_rules(rules, target_pattern)
+    targeted_facts = _build_targeted_fact_base_for_rules(rules, target_pattern, _resolving, _memo)
 
     # Apply existing rule system to the targeted fact base
     inferred_facts = apply_targeted_rules(rules, targeted_facts)
@@ -190,19 +210,50 @@ def _apply_rules_with_hidden_variables(rules, target_pattern: Fact) -> list[Fact
     return [fact for fact in inferred_facts if type(fact) is target_type]
 
 
-def _build_targeted_fact_base_for_rules(rules, target_pattern: Fact) -> list[Fact]:
-    """Build a targeted fact base using hidden variables to avoid bulk loading."""
+def _free_inferred_pattern(fact_type: type) -> Fact:
+    """Build an all-variable pattern for an inferred fact type (its full extension)."""
+    return fact_type(subject=Var("_s"), object=Var("_o"))
+
+
+def _build_targeted_fact_base_for_rules(
+    rules, target_pattern: Fact, _resolving: frozenset = frozenset(), _memo: dict | None = None
+) -> list[Fact]:
+    """Build a targeted fact base using hidden variables to avoid bulk loading.
+
+    Inferred body conditions are resolved *transitively* (their stored facts
+    plus their own rules) so inference chains through multiple rule levels.
+    A body condition whose type is already being resolved is left to the
+    fixpoint in ``apply_targeted_rules`` (this is how recursive rules grow),
+    which keeps recursion terminating.
+    """
+    if _memo is None:
+        _memo = {}
+    target_type = type(target_pattern)
+    resolving = _resolving | {target_type}
+
     targeted_facts = []
 
     # For each rule, analyze what facts it needs and load them with constraints
     for rule in rules:
         for condition in rule.body:
-            # Create a version of the condition with hidden variables for unbound variables
-            targeted_condition = _create_targeted_condition(condition, target_pattern)
+            condition_type = type(condition)
 
-            # Load facts for this targeted condition (uses existing optimized loading)
-            condition_facts = _load_stored_facts_for_pattern(targeted_condition)
-            targeted_facts.extend(condition_facts)
+            if getattr(condition_type, "_is_inferred", False):
+                # Chained inference: resolve the inferred condition transitively
+                # rather than loading it as a (nonexistent) stored fact.
+                if condition_type in resolving:
+                    # Recursive reference - the fixpoint derives it from the
+                    # leaf facts already collected into the base.
+                    continue
+                if condition_type not in _memo:
+                    _memo[condition_type] = _get_facts_for_pattern(
+                        _free_inferred_pattern(condition_type), resolving, _memo
+                    )
+                targeted_facts.extend(_memo[condition_type])
+            else:
+                # Stored fact: load only the rows relevant to the target pattern.
+                targeted_condition = _create_targeted_condition(condition, target_pattern)
+                targeted_facts.extend(_load_stored_facts_for_pattern(targeted_condition))
 
     # Remove duplicates
     seen = set()
