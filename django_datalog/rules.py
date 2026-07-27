@@ -225,34 +225,50 @@ def _apply_single_rule(rule_obj: Rule, known_facts: list[Fact]) -> list[Fact]:
 
 
 def _find_all_bindings(conditions: list[Any], known_facts: list[Fact]) -> list[dict[str, Any]]:
-    """Find all variable bindings that satisfy all conditions."""
+    """Find all variable bindings that satisfy all conditions.
+
+    Conditions are joined left-to-right with a hash join on the variables they
+    share, so an N-condition body over M facts costs O(M + matches) per join
+    instead of the O(M^N) nested-loop product.
+    """
     if not conditions:
         return [{}]  # Empty binding for empty conditions
 
-    all_bindings = []
+    result = _find_bindings_for_condition(conditions[0], known_facts)
+    for condition in conditions[1:]:
+        if not result:
+            break  # nothing left to extend
+        result = _join_bindings(result, _find_bindings_for_condition(condition, known_facts))
+    return result
 
-    # Start with the first condition
-    first_condition = conditions[0]
-    remaining_conditions = conditions[1:]
 
-    # Find all bindings for the first condition
-    first_bindings = _find_bindings_for_condition(first_condition, known_facts)
+def _binding_key(value: Any) -> Any:
+    """Hashable, equality-consistent key for a bound value (pk for models)."""
+    return getattr(value, "pk", value)
 
-    # For each binding of the first condition, try to extend it with remaining conditions
-    for binding in first_bindings:
-        if remaining_conditions:
-            # Recursively find bindings for remaining conditions
-            extended_bindings = _find_all_bindings(remaining_conditions, known_facts)
-            for ext_binding in extended_bindings:
-                # Merge bindings, checking for conflicts
-                merged = _merge_bindings(binding, ext_binding)
-                if merged is not None:
-                    all_bindings.append(merged)
-        else:
-            # No more conditions, this binding is complete
-            all_bindings.append(binding)
 
-    return all_bindings
+def _join_bindings(
+    left: list[dict[str, Any]], right: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Relational join of two binding lists on the variables they share."""
+    if not left or not right:
+        return []
+
+    shared = [k for k in left[0] if k in right[0]]
+    if not shared:
+        # Disjoint variables: cartesian product (no conflicts possible).
+        return [{**lb, **rb} for lb in left for rb in right]
+
+    # Hash join: index the right side by its shared-variable values.
+    index: dict[tuple, list[dict[str, Any]]] = {}
+    for rb in right:
+        index.setdefault(tuple(_binding_key(rb[k]) for k in shared), []).append(rb)
+
+    joined = []
+    for lb in left:
+        for rb in index.get(tuple(_binding_key(lb[k]) for k in shared), ()):
+            joined.append({**lb, **rb})
+    return joined
 
 
 def _find_bindings_for_condition(condition: Any, known_facts: list[Fact]) -> list[dict[str, Any]]:
@@ -290,20 +306,6 @@ def _unify_facts(pattern_fact: Fact, concrete_fact: Fact) -> dict[str, Any] | No
         return None  # Objects don't match
 
     return bindings
-
-
-def _merge_bindings(binding1: dict[str, Any], binding2: dict[str, Any]) -> dict[str, Any] | None:
-    """Merge two variable bindings, checking for conflicts."""
-    merged = binding1.copy()
-
-    for var_name, value in binding2.items():
-        if var_name in merged:
-            if merged[var_name] != value:
-                return None  # Conflict - same variable bound to different values
-        else:
-            merged[var_name] = value
-
-    return merged
 
 
 def _instantiate_fact(pattern_fact: Fact, bindings: dict[str, Any]) -> Fact | None:
