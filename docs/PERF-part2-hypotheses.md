@@ -60,6 +60,24 @@ Colleague` (chain); `Ancestor := ParentOf | (ParentOf & Ancestor)` (recursive).
 
 ---
 
+## Correction (2026-07-27): the "flat ~2 ms" claim was masked by the benchmark
+
+The early benchmark used `fan_out=10` (each person in a company of 10), so a
+bound query's *neighbourhood* was constant at 10 regardless of N — which hid a
+real O(neighbourhood²) cost. Kaiko's data is a near-star (many users share a
+vessel/company), so the neighbourhood is large and the blow-up reappeared: a
+single-subject query still derived the **whole relation over the neighbourhood**
+and filtered afterwards. H1's pushdown restricted base *loading* but not rule
+*derivation*.
+
+**Fix — goal-directed rule specialization** (`_specialize_rule`, query.py): a
+non-recursive rule's head is bound to the query's concrete positions before
+evaluation (`Colleague(alice, b) :- WorksFor(alice, c) & WorksFor(b, c)`), so
+only answer rows are derived. `test_perf_single_subject.py` (all N at one
+company) went 27 s → 0.038 s at N=2000, and is now linear. Recursive relations
+stay generic (specializing a recursive base case starves the recursive case).
+Benchmark now also keeps the large-neighbourhood case as a guard.
+
 ## Results so far (H0 + H1 done)
 
 `fan_out=10`, concrete-subject `Colleague(alice,Var)` returning 10 rows:

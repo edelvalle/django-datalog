@@ -143,40 +143,122 @@ existing `max_iterations` guard in `apply_rules` is a backstop, not the design.
 
 # Part 2 — Performance: rule evaluation must scale (do after Part 1)
 
-## Symptom (measured on ~118k-edge production-shaped data)
+## STATUS: RESOLVED (goal-directed rule specialization)
 
-- Enumerating one stored fact type (`10,223` rows): ~4 s.
-- A single concrete-subject inferred query, `CanAccessVessel(user, Var("v"))` for a
-  user with 273 results: **did not return within 45 s**.
-- The all-variable enumeration `CanAccessVessel(Var, Var)`: does not complete.
+The single-subject blow-up is fixed on the current branch. The Kaiko
+reproduction (`test_perf_single_subject.py`) now scales linearly:
 
-The engine is only usable on tiny fact sets today, so datalog cannot be a runtime
-read path.
+| N co-workers | before | after |
+|---|---|---|
+| 250  | 0.44 s | 0.007 s |
+| 500  | 1.57 s | 0.013 s |
+| 1000 | 6.75 s | 0.024 s |
+| 2000 | 26.9 s | 0.038 s |
 
-## Root cause (verified, with `file:line`)
+Two clarifications on the analysis below (which was profiled on an **older
+build**):
+- The `rules.py:213 _apply_single_rule` list-dedup in the stack dump had
+  already been replaced by a set-based dedup (and then a semi-naïve fixpoint);
+  that function no longer exists on this branch. So the "kill the O(n²) dedup"
+  fix was already in — and was *not* what still made this slow.
+- The real remaining cost was that a *bound* query still derived the **whole
+  relation over the neighbourhood** and filtered afterwards (O(neighbourhood²)),
+  because rule *derivation* was generic. The "secondary contributor" note below
+  (conjunctive bodies loading full extensions) was the right scent.
 
-Every query that touches an inferred fact takes the in-memory fixpoint path, which
-loads full fact extensions into Python lists and unifies with nested loops
-(`_satisfy_conjunction_with_targeted_facts` `query.py:89` →
-`_query_against_facts` `query.py:292`, O(facts) per condition, O(product) per
-join). The fast ORM path is skipped for exactly the queries that need it:
+Fix: `_specialize_rule` (query.py) binds a non-recursive rule's head to the
+query's concrete positions before evaluation, so only the answer rows are
+derived — O(answer). Recursive relations stay generic (specializing a recursive
+base case is unsound); goal-directed recursion remains future work. The
+reproduction is now a passing regression guard. Remaining: structural ORM
+compilation for the all-variable enumeration path.
 
-`_try_automatic_orm_conversion` (`query.py:614`) raises `NotImplementedError`
-(→ fixpoint fallback) when:
+--- original analysis (older build) below ---
 
-```python
-if not hasattr(fact_class, '_django_model') or getattr(fact_class, 'inferred', False):
-    raise NotImplementedError("ORM conversion only supports stored facts")   # query.py:627
-if not isinstance(condition.subject, Var) or not isinstance(condition.object, Var):
-    raise NotImplementedError("ORM conversion only supports variable positions")  # query.py:633
+This reproduced on an earlier build — the semi-naïve fixpoint and `as_queryset`
+did not fix it on their own, because the hot path was rule application, not the
+parts those changes touched.
+
+## Symptom (measured)
+
+On a ~13k-fact production-shaped dataset (`StaffOf`≈9.9k, `MemberOf`≈2.1k,
+`Owns`≈1.5k), a single-user `CanAccessVessel(user, Var("v"))`:
+
+- heaviest user (1458-row answer): **did not return in 5 min**;
+- a user whose answer is a **single row**: **did not return in 70 s**.
+
+The cost tracks the *fact base and the derived-set size*, not the answer size —
+a one-row answer is as slow as the heaviest.
+
+Runnable reproduction (SQLite, no external DB):
+`test_project/testdjdatalog/test_perf_single_subject.py`. `Colleague` over N
+co-workers derives ~N facts; time is quadratic in N:
+
+| N (≈derived facts) | time | ms/row |
+|---|---|---|
+| 250  | 0.42 s | 1.69 |
+| 500  | 1.57 s | 3.14 |
+| 1000 | 6.75 s | 6.75 |
+| 2000 | 26.9 s | 13.47 |
+
+Every doubling ≈ 4× the time. The test's final assertion (2× facts should be
+~2× time) currently **fails** — that is the target.
+
+## Root cause (profiled, with `file:line`)
+
+A `faulthandler` stack dump of the hanging query is pinned, every sample, at the
+same place:
+
+```
+rules.py:213  _apply_single_rule        # <-- here
+rules.py:190  apply_targeted_rules
+query.py:186  _apply_rules_with_hidden_variables
+query.py:142  _get_facts_for_pattern
+query.py:116  _satisfy_conjunction_with_targeted_facts
 ```
 
-So (a) any inferred fact and (b) any concrete subject/object both force the slow
-path. A per-user access check is *both*.
+`rules.py:213` is:
+
+```python
+if new_fact and new_fact not in known_facts and new_fact not in new_facts:
+```
+
+`known_facts` and `new_facts` are **lists**, so each `x not in …` is a linear
+scan, and every element comparison runs the dataclass `__eq__` → model
+`__eq__` → `UUID.__eq__`. Deriving K facts is therefore
+O(K · (base + K)) comparisons with a heavy per-comparison constant — quadratic,
+which is exactly the curve above. `apply_targeted_rules` (`rules.py:168`) re-runs
+this each fixpoint iteration.
+
+Secondary contributor: `_find_all_bindings` (`rules.py:222`) resolves each body
+condition independently and merges, so a conjunctive body like
+`MemberOf(u,c) & Owns(c,v)` loads the *full* `Owns` extension rather than the
+slice joined to `u`'s companies, inflating K before the dedup even runs.
+
+Separately, the fast ORM path never engages for these queries:
+`_try_automatic_orm_conversion` (`query.py:614`) bails for (a) inferred facts
+(`query.py:627`) and (b) any concrete position (`query.py:633`) — and a per-user
+check is both — so everything falls to the fixpoint above.
 
 ## Fix direction
 
-Compile inferred-fact queries to Django ORM instead of a Python fixpoint:
+**First, the cheap high-impact fix — kill the O(n²) dedup** (turns the curve above
+near-linear on its own, no API change):
+
+- Deduplicate derived facts with a **set/dict** keyed by
+  `(type(fact), subject_pk, object_pk)` instead of `list.__contains__`
+  (`rules.py:213`, and the `all_facts`/`new_facts` accumulation in
+  `apply_rules`/`apply_targeted_rules`).
+- Make facts **hashable/equal by that key** so comparisons are hash/identity, not
+  a recursive `UUID.__eq__` on model instances (compare `subject_id`/`object_id`,
+  never load or compare model objects during inference).
+- Propagate bound variables in `_find_all_bindings` (`rules.py:222`) so a
+  conjunctive body loads only the joined slice, not each condition's full
+  extension — shrinks K.
+
+**Then, the structural fix — compile inferred-fact queries to Django ORM** instead
+of a Python fixpoint (needed for the all-variable enumeration and to make this a
+real runtime read path):
 
 - **Expand a (non-recursive) rule into a queryset over the base-fact storage
   models.** e.g. `CanAccessVessel(u, Var("v"))` →
@@ -197,16 +279,16 @@ Compile inferred-fact queries to Django ORM instead of a Python fixpoint:
 
 ## Acceptance criteria (Part 2)
 
-- Add a benchmark (e.g. `test_project/`) that seeds N∈{1k,10k,100k} stored facts
-  and asserts wall-clock budgets:
-  - concrete-subject inferred query (`CanAccessVessel(user, Var)`) at 100k: well
-    under ~100 ms.
-  - all-variable enumeration completes and is O(result), not O(facts²).
-- The ORM path handles inferred heads and concrete positions (the two bails above
-  are gone or narrowed).
-- Results are identical to the fixpoint path (cross-check the two on small data).
-- `query(..., hydrate=False)` for a compiled query issues O(1) SQL round trips,
-  not one-per-fact.
+- `test_project/testdjdatalog/test_perf_single_subject.py` passes: doubling the
+  derived-set size roughly doubles the time (linear), not quadruples it.
+- The dedup no longer compares model instances / UUIDs during inference (guard by
+  the scaling test above; optionally assert no extra SQL from `__eq__`).
+- A single-user concrete-subject query on ~100k stored facts returns well under
+  ~100 ms; the all-variable enumeration is O(result), not O(facts²).
+- The ORM path handles inferred heads and concrete positions (the two bails at
+  `query.py:627,633` are gone or narrowed).
+- Results are identical to the pre-fix fixpoint path (cross-check on small data);
+  existing tests and the Part 1 chained-inference tests stay green.
 
 ---
 
