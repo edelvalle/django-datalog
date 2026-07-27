@@ -12,7 +12,7 @@ from django.db.models import Q
 
 from .facts import Fact
 from .optimizer import optimize_query, time_fact_execution
-from .rules import apply_targeted_rules, get_rules
+from .rules import Rule, apply_targeted_rules, get_rules
 from .variables import Var, has_variable_references, substitute_variables_in_q
 
 
@@ -236,6 +236,21 @@ def _load_stored_facts_for_pattern(pattern: Fact) -> list[Fact]:
         return []
 
 
+def _specialize_rule(rule: Rule, target_pattern: Fact) -> Rule:
+    """Bind a rule's head (and body) to the query's concrete positions.
+
+    Turns ``Colleague(a, b) :- WorksFor(a, c) & WorksFor(b, c)`` queried as
+    ``Colleague(alice, Var)`` into ``Colleague(alice, b) :- WorksFor(alice, c)
+    & WorksFor(b, c)``. Evaluation then derives only the answer rows
+    (``Colleague(alice, *)``) instead of the whole relation, so a bound query
+    costs O(answer) rather than O(neighbourhood²).
+    """
+    head_sub = _unify_head_with_target(rule.head, target_pattern)
+    new_head = _apply_head_sub_to_condition(rule.head, head_sub)
+    new_body = [_apply_head_sub_to_condition(condition, head_sub) for condition in rule.body]
+    return Rule(head=new_head, body=new_body)
+
+
 def _apply_rules_with_hidden_variables(
     rules, target_pattern: Fact, _resolving: frozenset = frozenset(), _memo: dict | None = None
 ) -> list[Fact]:
@@ -245,8 +260,24 @@ def _apply_rules_with_hidden_variables(
     # Create a targeted fact base by loading only facts needed for these specific rules
     targeted_facts = _build_targeted_fact_base_for_rules(rules, target_pattern, _resolving, _memo)
 
+    # Specialize the rules to the query's bound positions so derivation is
+    # goal-directed: only answer rows are produced, not the whole relation.
+    # This is only sound when the relation is NOT recursive - specializing a
+    # recursive relation's base case to the bound value starves the recursive
+    # case of the intermediate facts it needs. If any rule for this head is
+    # recursive, evaluate them all generically (the closure is still correct;
+    # goal-directed recursion is a separate, harder optimization).
+    resolving = _resolving | {type(target_pattern)}
+    relation_is_recursive = any(
+        any(type(condition) in resolving for condition in rule.body) for rule in rules
+    )
+    if _target_has_concrete_position(target_pattern) and not relation_is_recursive:
+        eval_rules = [_specialize_rule(rule, target_pattern) for rule in rules]
+    else:
+        eval_rules = rules
+
     # Apply existing rule system to the targeted fact base
-    inferred_facts = apply_targeted_rules(rules, targeted_facts)
+    inferred_facts = apply_targeted_rules(eval_rules, targeted_facts)
 
     # Filter to only return facts of the target pattern type
     target_type = type(target_pattern)
