@@ -80,17 +80,25 @@ All-variable enumeration (`Colleague(Var,Var)`) after **H3** (hash join):
 10k pairs 142 ms, 100k pairs ~1.07 s (was: did not complete), 500k pairs ~5.6 s
 — ~11 µs/pair, i.e. O(result). Concrete/chained stay ~2 ms.
 
-**Still open:** **H2** (compile non-recursive rules to a composable Django
-queryset / `compile()` / `as_queryset=` — the 0.5.0 read-path API, and pushes
-enumeration/joins into SQL); **H4** semi-naïve fixpoint for deep recursion;
-**H5** column pushdown / `hydrate=False` fast path; **H6** cross-query
-memoization / materialization.
+**H2 (composable queryset API) — DONE (first cut):** `as_queryset(pattern,
+on=, model=)` + async `aas_queryset` resolve via the (fast) engine and return a
+lazy `Model.objects.filter(pk__in=<ids>)` the caller composes with the ORM.
+Universally correct (works for every rule shape incl. recursive); ids are
+materialized once (cheap for bound queries). **Remaining H2 optimization:**
+compile non-recursive bodies to a *pure-SQL* subquery (nested `__in`/`Exists`,
+OR→`union`) so ids aren't materialized — worthwhile only if the id set is ever
+large (e.g. all-var read paths).
+
+**Still open:** the pure-SQL compilation above; **H4** semi-naïve fixpoint for
+deep recursion over large data; **H5** column pushdown / `hydrate=False` fast
+path; **H6** cross-query memoization / materialization.
 
 ## Hypotheses (test against the baseline)
 
 ### H0 — Set-based dedup (near-free quick win)   ✅ DONE
 ### H1 — Bound-argument pushdown (magic sets / SIP)   ✅ DONE (incl. H1b through inferred bodies)
 ### H3 — Hash-indexed in-memory joins   ✅ DONE (all-var / large joins now O(result))
+### H2 — Composable queryset API   ✅ DONE first cut (as_queryset/aas_queryset); pure-SQL compilation still open
 
 (original hypothesis notes below, kept for the remaining items)
 

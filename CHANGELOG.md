@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### 🚀 Features
+- **Composable querysets**: `as_queryset(pattern, on="object", model=None)` (and async `aas_queryset`) resolve an inferred query and return a lazy `Model.objects.filter(pk__in=…)` the caller can compose with the ORM — e.g. `as_queryset(CanAccessVessel(user, Var("v"))).filter(active=True)`. The target model is inferred from the fact's annotation when omitted.
+
 ### ⚡ Performance
 - **Set-based fixpoint dedup**: `apply_rules`/`apply_targeted_rules` now track derived facts in a set instead of `x not in list`, removing the O(M²) dedup. ~30–66× on inference-heavy queries on its own.
 - **Bound-argument pushdown (sideways information passing)**: when a query pins a position (e.g. `Colleague(alice, Var)`), concrete/bound values are pushed into the DB filters and join-variable values gathered from one condition constrain the next (`pk__in`), including through chained inferred bodies. Concrete-subject and chained-concrete inferred queries become O(neighbourhood) instead of O(all-facts): a per-user access check that took >45 s on ~100k facts now runs in **~2 ms** (flat in N). Pushdown is disabled for recursive rules (unsound there). Results are unchanged — the fixpoint and pushed-down paths agree.

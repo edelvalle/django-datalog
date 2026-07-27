@@ -166,6 +166,22 @@ async def handler(request):
     await aretract_facts(WorksFor(alice, tech_corp))
 ```
 
+### Composable querysets
+`as_queryset` resolves an inferred query and hands back a lazy Django
+`QuerySet` you can compose with the ORM — ideal for access-control read paths
+(the target model is inferred from the fact when you omit it):
+
+```python
+from django_datalog.models import as_queryset, aas_queryset, Var
+
+# Vessels a user can access, then compose freely with the ORM:
+vessels = as_queryset(CanAccessVessel(user, Var("v")), on="object")
+active = vessels.filter(active=True).order_by("name")
+
+# async variant
+vessels = await aas_queryset(CanAccessVessel(user, Var("v")), on="object")
+```
+
 ### Rule Context
 Isolate rules for testing or temporary logic:
 
