@@ -76,15 +76,21 @@ the inferred body too). Both are **flat in N** — well under the brief's
 "<100 ms @ 100k" target. Correctness: full suite (95) + chain tests green;
 pushdown disabled for recursive rules (unsound); all-var enumeration unchanged.
 
-**Still open:** all-variable enumeration (`Colleague(Var,Var)`) is O(result) via
-the Python fixpoint and dominates at large N → next is **H3** (hash-indexed
-in-memory joins) and/or **H2** (compile to a composable queryset). H4/H5/H6 as
-noted.
+All-variable enumeration (`Colleague(Var,Var)`) after **H3** (hash join):
+10k pairs 142 ms, 100k pairs ~1.07 s (was: did not complete), 500k pairs ~5.6 s
+— ~11 µs/pair, i.e. O(result). Concrete/chained stay ~2 ms.
+
+**Still open:** **H2** (compile non-recursive rules to a composable Django
+queryset / `compile()` / `as_queryset=` — the 0.5.0 read-path API, and pushes
+enumeration/joins into SQL); **H4** semi-naïve fixpoint for deep recursion;
+**H5** column pushdown / `hydrate=False` fast path; **H6** cross-query
+memoization / materialization.
 
 ## Hypotheses (test against the baseline)
 
 ### H0 — Set-based dedup (near-free quick win)   ✅ DONE
 ### H1 — Bound-argument pushdown (magic sets / SIP)   ✅ DONE (incl. H1b through inferred bodies)
+### H3 — Hash-indexed in-memory joins   ✅ DONE (all-var / large joins now O(result))
 
 (original hypothesis notes below, kept for the remaining items)
 
