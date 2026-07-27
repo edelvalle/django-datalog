@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### ⚡ Performance
+- **Set-based fixpoint dedup**: `apply_rules`/`apply_targeted_rules` now track derived facts in a set instead of `x not in list`, removing the O(M²) dedup. ~30–66× on inference-heavy queries on its own.
+- **Bound-argument pushdown (sideways information passing)**: when a query pins a position (e.g. `Colleague(alice, Var)`), concrete/bound values are pushed into the DB filters and join-variable values gathered from one condition constrain the next (`pk__in`), including through chained inferred bodies. Concrete-subject and chained-concrete inferred queries become O(neighbourhood) instead of O(all-facts): a per-user access check that took >45 s on ~100k facts now runs in **~2 ms** (flat in N). Pushdown is disabled for recursive rules (unsound there); all-variable enumeration still uses the fixpoint. Results are unchanged — the fixpoint and pushed-down paths agree.
+
 ### 🐛 Bug Fixes
 - **Chained inference now resolves through inferred rule bodies**: a rule whose body referenced another *inferred* fact previously returned an empty result because the intermediate level was never materialized. Body-condition resolution is now transitive — inferred conditions are resolved recursively (stored facts + their own rules) — so inference chains to any depth. Recursive rules still terminate (a condition of a type currently being resolved is left to the fixpoint), and each inferred type's extension is memoized per query.
 
