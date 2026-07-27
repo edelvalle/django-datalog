@@ -89,9 +89,18 @@ compile non-recursive bodies to a *pure-SQL* subquery (nested `__in`/`Exists`,
 OR→`union`) so ids aren't materialized — worthwhile only if the id set is ever
 large (e.g. all-var read paths).
 
-**Still open:** the pure-SQL compilation above; **H4** semi-naïve fixpoint for
-deep recursion over large data; **H5** column pushdown / `hydrate=False` fast
-path; **H6** cross-query memoization / materialization.
+**H4 (semi-naïve fixpoint) — DONE:** each round joins only against the previous
+round's delta and terminates when the delta is empty (no iteration cap). Fixed a
+latent correctness bug — the old `max_iterations=100` silently truncated closures
+deeper than 100 — and sped deep recursion (depth-100 ~1.2 s → ~30 ms; depth-600
+now ~2 s and complete). A bound recursive query still computes the *full* closure
+(O(depth²) for a chain), since pushdown is unsound for recursion; goal-directed
+**magic-sets for recursion** would restrict it to the query's reachable set — the
+remaining recursive optimization, and the most complex.
+
+**Still open:** magic-sets for recursive queries; pure-SQL compilation of
+non-recursive bodies; **H5** column pushdown / `hydrate=False` fast path; **H6**
+cross-query memoization / materialization.
 
 ## Hypotheses (test against the baseline)
 
@@ -99,6 +108,7 @@ path; **H6** cross-query memoization / materialization.
 ### H1 — Bound-argument pushdown (magic sets / SIP)   ✅ DONE (incl. H1b through inferred bodies)
 ### H3 — Hash-indexed in-memory joins   ✅ DONE (all-var / large joins now O(result))
 ### H2 — Composable queryset API   ✅ DONE first cut (as_queryset/aas_queryset); pure-SQL compilation still open
+### H4 — Semi-naïve fixpoint   ✅ DONE (also fixed the max_iterations closure-truncation bug)
 
 (original hypothesis notes below, kept for the remaining items)
 
