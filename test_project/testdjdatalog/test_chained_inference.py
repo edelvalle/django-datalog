@@ -99,6 +99,21 @@ class ChainedInferenceTests(TestCase):
 
         self.assertEqual(descendants, {people[1].pk, people[2].pk, people[3].pk})
 
+    def test_deep_recursion_beyond_iteration_cap(self):
+        """Transitive closure completes past the old 100-iteration cap (depth 120)."""
+        depth = 120
+        people = [Person.objects.create(name=f"D{i}") for i in range(depth + 1)]
+        store_facts(*[ParentOf(subject=people[i], object=people[i + 1]) for i in range(depth)])
+
+        with rule_context():
+            a, b, c = Var[Person]("a"), Var[Person]("b"), Var[Person]("c")
+            rule(Ancestor(a, b), ParentOf(a, b) | (ParentOf(a, c) & Ancestor(c, b)))
+            descendants = {r["d"].pk for r in query(Ancestor(people[0], Var[Person]("d")))}
+
+        # root reaches every later node - all `depth` of them, not just ~100
+        self.assertEqual(descendants, {p.pk for p in people[1:]})
+        self.assertEqual(len(descendants), depth)
+
     def test_chain_hydrate_false(self):
         """Chained inference works with hydrate=False (PKs)."""
         with rule_context():
