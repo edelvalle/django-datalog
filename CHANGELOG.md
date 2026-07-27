@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### 🐛 Bug Fixes
+- **Chained inference now resolves through inferred rule bodies**: a rule whose body referenced another *inferred* fact previously returned an empty result because the intermediate level was never materialized. Body-condition resolution is now transitive — inferred conditions are resolved recursively (stored facts + their own rules) — so inference chains to any depth. Recursive rules still terminate (a condition of a type currently being resolved is left to the fixpoint), and each inferred type's extension is memoized per query.
+
 ## [0.4.1] - 2026-07-22
 
 ### 🚀 Features
