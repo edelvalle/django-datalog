@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.1] - 2026-07-29
+
+### 🐛 Bug Fixes
+- **`Fact` `&`/`|` operators type-accept heterogeneous fact types**: the operator annotations used `Self`, so a type checker rejected composing different fact types — the primary use of rule bodies (`MemberOf(u, c) & Owns(c, v)` raised `Unsupported operand types for &`). They now accept any `Fact`, matching the runtime, so mixed-type rule bodies like `StaffOf(...) | (MemberOf(...) & Owns(...))` type-check without `# type: ignore[operator]`.
+
 ## [0.5.0] - 2026-07-27
 
 ### 🚀 Features
