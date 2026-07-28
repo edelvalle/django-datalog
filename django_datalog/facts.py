@@ -5,7 +5,7 @@ Fact system for djdatalog - handles fact definitions, storage, and retrieval.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, ClassVar, Self, dataclass_transform, get_type_hints
+from typing import Any, ClassVar, dataclass_transform, get_type_hints
 
 import uuid6
 from asgiref.sync import sync_to_async
@@ -229,9 +229,13 @@ class Fact:
         return subject_key == other_subject_key and object_key == other_object_key
 
     def __or__(
-        self, other: Self | list[Self | FactConjunction] | FactConjunction
-    ) -> list[Self | FactConjunction]:
-        """Implement | operator for disjunction (OR logic)."""
+        self, other: Fact | list[Fact | FactConjunction] | FactConjunction
+    ) -> list[Fact | FactConjunction]:
+        """Implement | operator for disjunction (OR logic).
+
+        ``other`` is any ``Fact`` (not just ``Self``): rule bodies compose
+        different fact types, e.g. ``StaffOf(...) | (MemberOf(...) & Owns(...))``.
+        """
         match other:
             case Fact():
                 return [self, other]
@@ -242,8 +246,12 @@ class Fact:
             case _:
                 raise TypeError("Cannot use | operator between Fact and unsupported type.")
 
-    def __and__(self, other: Self | FactConjunction) -> FactConjunction:
-        """Implement & operator for conjunction (AND logic)."""
+    def __and__(self, other: Fact | FactConjunction) -> FactConjunction:
+        """Implement & operator for conjunction (AND logic).
+
+        ``other`` is any ``Fact`` (not just ``Self``): a conjunction joins
+        different fact types, e.g. ``MemberOf(u, c) & Owns(c, v)``.
+        """
         match other:
             case Fact():
                 return FactConjunction([self, other])
@@ -257,8 +265,8 @@ class Fact:
                 raise TypeError("Cannot use & operator between Fact and unsupported type.")
 
     def __ror__(
-        self, other: list[Self | FactConjunction] | FactConjunction
-    ) -> list[Self | FactConjunction]:
+        self, other: list[Fact | FactConjunction] | FactConjunction
+    ) -> list[Fact | FactConjunction]:
         """Implement right-side | operator for [Fact1, Fact2] | Fact3 or (Fact1, Fact2) | Fact3."""
         match other:
             case list():
