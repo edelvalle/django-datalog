@@ -39,6 +39,18 @@ def correct_usage() -> None:
     query(WorksFor(Var("anon_emp"), Var("anon_company")))
 
 
+def heterogeneous_composition() -> None:
+    """Different fact types must compose with & and | (the primary rule-body use)."""
+    emp = Var[Employee]("emp")
+    company = Var[Company]("company")
+    project = Var[Project]("project")
+
+    # heterogeneous AND across two different fact types
+    _ = WorksFor(emp, company) & WorksOn(emp, project)
+    # heterogeneous OR with a nested AND (the CanAccessVessel := A | (B & C) shape)
+    _ = WorksFor(emp, company) | (WorksFor(emp, company) & WorksOn(emp, project))
+
+
 def rejected_usage() -> None:
     """Typed variables in the wrong slot — each line MUST raise arg-type."""
     emp = Var[Employee]("emp")
