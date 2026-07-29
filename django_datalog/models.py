@@ -25,8 +25,12 @@ from django_datalog.query import (
     _fact_to_django_query,
     _prefix_q_object,
     aas_queryset,
+    aexists,
+    afirst,
     aquery,
     as_queryset,
+    exists,
+    first,
     query,
 )
 from django_datalog.rules import Rule, get_rules, rule, rule_context
@@ -46,6 +50,11 @@ __all__ = [
     "query",
     "store_facts",
     "retract_facts",
+    # Single-result / early-out entry points
+    "first",
+    "exists",
+    "afirst",
+    "aexists",
     # Async counterparts
     "aquery",
     "astore_facts",

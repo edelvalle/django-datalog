@@ -12,7 +12,14 @@ from django.db.models import Q
 
 from .facts import Fact
 from .optimizer import optimize_query, time_fact_execution
-from .rules import Rule, apply_targeted_rules, get_rules
+from .rules import (
+    Rule,
+    _binding_key,
+    _instantiate_fact,
+    _iter_all_bindings_multi,
+    apply_targeted_rules,
+    get_rules,
+)
 from .variables import Var, has_variable_references, substitute_variables_in_q
 
 
@@ -129,6 +136,52 @@ async def aas_queryset(pattern: Fact, *, on: str = "object", model=None):
     return await sync_to_async(as_queryset, thread_sensitive=True)(pattern, on=on, model=model)
 
 
+_MISSING = object()
+
+
+def first(*fact_patterns: Fact, hydrate: bool = True) -> dict[str, Any] | None:
+    """Return the first result of a query, or ``None`` — stopping at the match.
+
+    ``query`` is lazy, so this consumes it only up to the first binding: once a
+    match is found derivation stops and the remaining results are never
+    computed. Use it when one answer is enough::
+
+        row = first(WorksFor(alice, Var("company")))
+    """
+    pk_result = next(iter(query(*fact_patterns, hydrate=False)), None)
+    if pk_result is None:
+        return None
+    if not hydrate:
+        return pk_result
+    # Hydrate only the one result we kept (not the whole set).
+    return next(iter(_hydrate_results([pk_result], list(fact_patterns))), pk_result)
+
+
+def exists(*fact_patterns: Fact) -> bool:
+    """Return ``True`` as soon as the query has at least one result.
+
+    The common access-check shape — ``if exists(CanAccessVessel(user, vessel)):
+    ...`` — without building model instances (``hydrate=False``) or computing
+    any result beyond the first.
+    """
+    return next(iter(query(*fact_patterns, hydrate=False)), _MISSING) is not _MISSING
+
+
+async def afirst(*fact_patterns: Fact, hydrate: bool = True) -> dict[str, Any] | None:
+    """Async counterpart of :func:`first`."""
+    return await sync_to_async(_first_to_value, thread_sensitive=True)(fact_patterns, hydrate)
+
+
+async def aexists(*fact_patterns: Fact) -> bool:
+    """Async counterpart of :func:`exists`."""
+    return await sync_to_async(exists, thread_sensitive=True)(*fact_patterns)
+
+
+def _first_to_value(fact_patterns: tuple[Fact, ...], hydrate: bool) -> dict[str, Any] | None:
+    """Run :func:`first` inside the sync executor (helper for :func:`afirst`)."""
+    return first(*fact_patterns, hydrate=hydrate)
+
+
 def _satisfy_conjunction_with_targeted_facts(conditions, bindings, original_conditions=None) -> Iterator[dict[str, Any]]:
     """Satisfy a conjunction using targeted fact loading - only load facts relevant to the query."""
     if original_conditions is None:
@@ -155,9 +208,10 @@ def _satisfy_conjunction_with_targeted_facts(conditions, bindings, original_cond
     condition = conditions[0]
     remaining = conditions[1:]
 
-    # Get facts relevant to this specific condition (stored + inferred)
-    relevant_facts = _get_facts_for_pattern(condition)
-    
+    # Get facts relevant to this specific condition (stored + inferred), lazily
+    # so a consumer that stops early (exists/first) short-circuits derivation.
+    relevant_facts = _iter_facts_for_pattern(condition)
+
 
     # Query against the targeted fact set (skip cross-variable constraint checking during unification)
     for result in _query_against_facts(condition, relevant_facts, bindings, skip_cross_var_constraints=True):
@@ -171,37 +225,88 @@ def _get_facts_for_pattern(
     _resolving: frozenset | None = None,
     _memo: dict | None = None,
 ) -> list[Fact]:
-    """Get facts relevant to a specific pattern - both stored and inferred.
+    """Eager list of facts (stored + inferred) for a pattern.
+
+    Callers that need the full extension (fact-base building) use this; the
+    lazy, short-circuitable form is :func:`_iter_facts_for_pattern`.
+    """
+    return list(_iter_facts_for_pattern(pattern, _resolving, _memo))
+
+
+def _iter_facts_for_pattern(
+    pattern: Fact,
+    _resolving: frozenset | None = None,
+    _memo: dict | None = None,
+):
+    """Lazily yield facts (stored, then inferred) matching ``pattern``'s type.
 
     ``_resolving`` holds the inferred fact types currently being resolved so
-    that recursive rules terminate; ``_memo`` caches each inferred type's full
-    extension for the duration of one top-level query.
+    recursive rules terminate; ``_memo`` caches each inferred type's extension
+    for one top-level query.
+
+    For a non-recursive relation the inferred facts are produced lazily
+    (goal-directed rule specialization + a streaming join), so a consumer that
+    stops after the first result — ``exists``/``first`` — never forces the whole
+    extension. A recursive relation falls back to the eager fixpoint, because a
+    transitive closure cannot be short-circuited.
     """
     if _resolving is None:
         _resolving = frozenset()
     if _memo is None:
         _memo = {}
 
-    # 1. Load stored facts that match this pattern type
-    stored_facts = _load_stored_facts_for_pattern(pattern)
+    # 1. Stored facts first.
+    yield from _load_stored_facts_for_pattern(pattern)
 
-    # 2. Find rules that could generate facts of this pattern type
-    relevant_rules = []
-    for rule in get_rules():
-        if type(rule.head) is type(pattern):
-            relevant_rules.append(rule)
-
-    # 3. If no rules can generate this fact type, just return stored facts
+    # 2. Rules that can generate this fact type.
+    relevant_rules = [r for r in get_rules() if type(r.head) is type(pattern)]
     if not relevant_rules:
-        return stored_facts
+        return
 
-    # 4. Apply targeted rule inference using hidden variables
-    inferred_facts = _apply_rules_with_hidden_variables(
-        relevant_rules, pattern, _resolving, _memo
+    resolving = _resolving | {type(pattern)}
+    relation_recursive = any(
+        any(type(condition) in resolving for condition in rule.body) for rule in relevant_rules
     )
+    if relation_recursive:
+        yield from _apply_rules_with_hidden_variables(relevant_rules, pattern, _resolving, _memo)
+    else:
+        yield from _iter_inferred_lazy(relevant_rules, pattern, _resolving, _memo)
 
-    # 5. Combine stored and inferred facts
-    return stored_facts + inferred_facts
+
+def _iter_inferred_lazy(
+    rules, target_pattern: Fact, _resolving: frozenset = frozenset(), _memo: dict | None = None
+):
+    """Lazily derive facts for a non-recursive relation (streaming counterpart
+    of :func:`_apply_rules_with_hidden_variables`).
+
+    Builds the same targeted fact base and applies the same goal-directed rule
+    specialization, but enumerates each rule's body bindings through a streaming
+    join and yields matching head facts as they are found (deduped by pk), so
+    the derivation stops as soon as the consumer does.
+    """
+    if _memo is None:
+        _memo = {}
+    targeted_facts = _build_targeted_fact_base_for_rules(rules, target_pattern, _resolving, _memo)
+    eval_rules = (
+        [_specialize_rule(rule, target_pattern) for rule in rules]
+        if _target_has_concrete_position(target_pattern)
+        else rules
+    )
+    target_type = type(target_pattern)
+    seen: set = set()
+    for rule in eval_rules:
+        sources = [targeted_facts] * len(rule.body)
+        for binding in _iter_all_bindings_multi(rule.body, sources):
+            try:
+                fact = _instantiate_fact(rule.head, binding)
+            except Exception:
+                continue
+            if fact is None or type(fact) is not target_type:
+                continue
+            key = (target_type, _binding_key(fact.subject), _binding_key(fact.object))
+            if key not in seen:
+                seen.add(key)
+                yield fact
 
 
 def _load_stored_facts_for_pattern(pattern: Fact) -> list[Fact]:
@@ -536,17 +641,16 @@ def _query_against_facts(pattern: Fact, facts: list[Fact], existing_bindings: di
         
     with time_fact_execution(pattern):
         pattern_type = type(pattern)
-        results = []
-
+        # Yield matches as they are found (not collect-then-yield) so a consumer
+        # that stops early stops iterating `facts` — which, when `facts` is the
+        # lazy _iter_facts_for_pattern generator, short-circuits derivation.
         for fact in facts:
             if type(fact) is pattern_type:
-                # Try to unify the pattern with this fact
-                substitution = _unify_fact_pattern(pattern, fact, existing_bindings, skip_cross_var_constraints)
+                substitution = _unify_fact_pattern(
+                    pattern, fact, existing_bindings, skip_cross_var_constraints
+                )
                 if substitution is not None:
-                    results.append(substitution)
-
-        # Yield all results
-        yield from results
+                    yield substitution
 
 
 def _unify_fact_pattern(pattern: Fact, concrete_fact: Fact, existing_bindings: dict[str, Any] = None, skip_cross_var_constraints: bool = False) -> dict[str, Any] | None:

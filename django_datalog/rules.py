@@ -4,6 +4,7 @@ Rule system for djdatalog - handles inference rules and rule evaluation.
 
 from __future__ import annotations
 
+import itertools
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any
@@ -209,21 +210,25 @@ def _find_all_bindings(conditions: list[Any], known_facts: list[Fact]) -> list[d
 def _find_all_bindings_multi(
     conditions: list[Any], sources: list[list[Fact]]
 ) -> list[dict[str, Any]]:
-    """Find all bindings satisfying the conditions, condition i drawn from sources[i].
+    """All bindings satisfying the conditions, condition i drawn from sources[i]."""
+    return list(_iter_all_bindings_multi(conditions, sources))
 
-    Conditions are joined left-to-right with a hash join on the variables they
-    share, so an N-condition body over M facts costs O(M + matches) per join
-    instead of the O(M^N) nested-loop product.
+
+def _iter_all_bindings_multi(conditions: list[Any], sources: list[list[Fact]]):
+    """Lazily yield bindings satisfying the conditions (condition i from sources[i]).
+
+    Conditions are joined left-to-right with a hash join on their shared
+    variables. The join streams its output, so a consumer that stops early
+    (e.g. ``exists``/``first``) does not force the whole product to be built.
     """
     if not conditions:
-        return [{}]  # Empty binding for empty conditions
+        yield {}
+        return
 
     result = _find_bindings_for_condition(conditions[0], sources[0])
     for i in range(1, len(conditions)):
-        if not result:
-            break  # nothing left to extend
-        result = _join_bindings(result, _find_bindings_for_condition(conditions[i], sources[i]))
-    return result
+        result = _iter_join_bindings(result, _find_bindings_for_condition(conditions[i], sources[i]))
+    yield from result
 
 
 def _binding_key(value: Any) -> Any:
@@ -231,28 +236,37 @@ def _binding_key(value: Any) -> Any:
     return getattr(value, "pk", value)
 
 
-def _join_bindings(
-    left: list[dict[str, Any]], right: list[dict[str, Any]]
-) -> list[dict[str, Any]]:
-    """Relational join of two binding lists on the variables they share."""
-    if not left or not right:
-        return []
+def _iter_join_bindings(left, right: list[dict[str, Any]]):
+    """Lazily join two binding streams on the variables they share.
 
-    shared = [k for k in left[0] if k in right[0]]
+    ``right`` is materialized and indexed (the build side); ``left`` is scanned
+    lazily and matches are yielded as they are found, so the join short-circuits
+    when the consumer stops.
+    """
+    right = list(right)
+    if not right:
+        return
+    left = iter(left)
+    try:
+        first = next(left)
+    except StopIteration:
+        return
+
+    all_left = itertools.chain([first], left)
+    shared = [k for k in first if k in right[0]]
     if not shared:
         # Disjoint variables: cartesian product (no conflicts possible).
-        return [{**lb, **rb} for lb in left for rb in right]
+        for lb in all_left:
+            for rb in right:
+                yield {**lb, **rb}
+        return
 
-    # Hash join: index the right side by its shared-variable values.
     index: dict[tuple, list[dict[str, Any]]] = {}
     for rb in right:
         index.setdefault(tuple(_binding_key(rb[k]) for k in shared), []).append(rb)
-
-    joined = []
-    for lb in left:
+    for lb in all_left:
         for rb in index.get(tuple(_binding_key(lb[k]) for k in shared), ()):
-            joined.append({**lb, **rb})
-    return joined
+            yield {**lb, **rb}
 
 
 def _find_bindings_for_condition(condition: Any, known_facts: list[Fact]) -> list[dict[str, Any]]:
