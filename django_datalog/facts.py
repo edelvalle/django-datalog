@@ -4,8 +4,9 @@ Fact system for djdatalog - handles fact definitions, storage, and retrieval.
 
 from __future__ import annotations
 
+import enum
 from dataclasses import dataclass
-from typing import Any, ClassVar, dataclass_transform, get_type_hints
+from typing import Any, ClassVar, assert_never, dataclass_transform, get_type_hints
 
 import uuid6
 from asgiref.sync import sync_to_async
@@ -103,14 +104,33 @@ class FactConjunction(tuple):
                 )
 
 
+class Unique(enum.Enum):
+    """Storage uniqueness constraint for a stored fact.
+
+    - ``TOGETHER`` (default): the ``(subject, object)`` pair is unique — a plain
+      edge with no duplicate pairs.
+    - ``SUBJECT`` / ``OBJECT``: that single position is unique, i.e. each
+      subject/object appears at most once (e.g. ``OBJECT`` = a single owner per
+      owned thing).
+    """
+
+    TOGETHER = "together"
+    SUBJECT = "subject"
+    OBJECT = "object"
+
+
 class FactModel(models.Model):
-    """Abstract base model for storing datalog facts."""
+    """Abstract base model for storing datalog facts.
+
+    The uniqueness constraint is set per-fact on the *concrete* model (see
+    ``Fact._create_django_model``), driven by ``unique=``, so it is not declared
+    here.
+    """
 
     id = models.UUIDField(primary_key=True, default=uuid6.uuid7, editable=False)
 
     class Meta:
         abstract = True
-        unique_together = (("subject", "object"),)
 
 
 @dataclass_transform(eq_default=False)
@@ -129,16 +149,21 @@ class Fact:
     object: Any
     _django_model: ClassVar[type[models.Model] | None]
     _is_inferred: ClassVar[bool] = False
+    # Which position is unique in storage (see :class:`Unique`).
+    _unique: ClassVar[Unique] = Unique.TOGETHER
 
-    def __init_subclass__(cls, inferred=False, **kwargs):
-        """Automatically generate Django models for fact storage and apply dataclass decorator."""
+    def __init_subclass__(cls, inferred=False, unique: Unique = Unique.TOGETHER, **kwargs):
+        """Generate the storage model and apply the dataclass decorator.
+
+        ``unique`` (a :class:`Unique`) controls the storage uniqueness constraint.
+        """
         super().__init_subclass__(**kwargs)
 
         # Apply dataclass decorator with unsafe_hash=True to the subclass
         cls = dataclass(unsafe_hash=True)(cls)
 
-        # Set inferred flag
         cls._is_inferred = inferred
+        cls._unique = unique
 
         # Only create Django model if not inferred
         if inferred:
@@ -173,11 +198,30 @@ class Fact:
                 f"Could not extract Django model types from {cls.__name__} annotations"
             )
 
-        # Create Django model fields
+        # The uniqueness constraint lives on the concrete model. A single-term
+        # Unique makes that FK unique (each subject/object appears once);
+        # TOGETHER keeps the pair unique (a plain edge, no duplicate pairs).
+        meta_attrs: dict[str, Any] = {"__module__": cls.__module__}
+        subject_unique = object_unique = False
+        match cls._unique:
+            case Unique.TOGETHER:
+                meta_attrs["unique_together"] = (("subject", "object"),)
+            case Unique.SUBJECT:
+                subject_unique = True
+            case Unique.OBJECT:
+                object_unique = True
+            case unreachable:
+                assert_never(unreachable)
+
         model_fields = {
-            "subject": models.ForeignKey(subject_model, on_delete=models.CASCADE, related_name="+"),
-            "object": models.ForeignKey(object_model, on_delete=models.CASCADE, related_name="+"),
+            "subject": models.ForeignKey(
+                subject_model, on_delete=models.CASCADE, related_name="+", unique=subject_unique
+            ),
+            "object": models.ForeignKey(
+                object_model, on_delete=models.CASCADE, related_name="+", unique=object_unique
+            ),
             "__module__": cls.__module__,
+            "Meta": type("Meta", (), meta_attrs),
         }
 
         # Create the Django model class

@@ -9,6 +9,7 @@ specialized modules for facts, queries, and rules.
 from django_datalog.facts import (
     Fact,
     FactConjunction,
+    Unique,
     aretract_facts,
     astore_facts,
     retract_facts,
@@ -43,6 +44,7 @@ __all__ = [
     # Core classes
     "Fact",
     "FactConjunction",
+    "Unique",
     "Var",
     "Term",
     "Rule",
