@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.2] - 2026-07-29
+
+### 🚀 Features
+- **`exists` / `first` (+ async `aexists` / `afirst`)**: single-result query entry points — `if exists(CanAccessVessel(user, vessel)): ...` for access checks, `first(WorksFor(alice, Var("company")))` for "give me one". They genuinely short-circuit: inferred-fact derivation stops at the first match rather than computing the whole extension (a bound access check over a realistic neighbourhood is ~0.6 ms; deriving the full set would be O(neighbourhood)). `exists` skips hydration; `first` hydrates only the one result it keeps.
+
+### ⚡ Performance
+- **Streaming (lazy) evaluation**: rule-body joins and inferred-fact derivation now stream their results instead of materializing the full set, so `query(..., hydrate=False)` and the new `exists`/`first` stop deriving as soon as the consumer stops. Recursive relations still use the eager fixpoint (a closure can't short-circuit); results are unchanged.
+
 ## [0.5.1] - 2026-07-29
 
 ### 🐛 Bug Fixes

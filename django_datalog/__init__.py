@@ -1,6 +1,6 @@
 # Package for Datalog-like fact & inference engine
 
-__version__ = "0.5.1"
+__version__ = "0.5.2"
 
 default_app_config = "django_datalog.apps.DjangoDatalogConfig"
 
