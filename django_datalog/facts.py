@@ -199,27 +199,28 @@ class Fact:
             )
 
         # The uniqueness constraint lives on the concrete model. A single-term
-        # Unique makes that FK unique (each subject/object appears once);
-        # TOGETHER keeps the pair unique (a plain edge, no duplicate pairs).
+        # Unique constrains that one position (each subject/object appears once);
+        # TOGETHER keeps the pair unique (a plain edge, no duplicate pairs). We
+        # use a Meta UniqueConstraint rather than a unique=True ForeignKey so
+        # Django does not raise W342 ("use OneToOneField") for the single-term
+        # case — the DB constraint is the same, the field stays a ForeignKey.
         meta_attrs: dict[str, Any] = {"__module__": cls.__module__}
-        subject_unique = object_unique = False
         match cls._unique:
             case Unique.TOGETHER:
                 meta_attrs["unique_together"] = (("subject", "object"),)
-            case Unique.SUBJECT:
-                subject_unique = True
-            case Unique.OBJECT:
-                object_unique = True
+            case Unique.SUBJECT | Unique.OBJECT:
+                column = cls._unique.value  # "subject" | "object"
+                meta_attrs["constraints"] = [
+                    models.UniqueConstraint(
+                        fields=[column], name=f"uniq_{model_name.lower()}_{column}"[:63]
+                    )
+                ]
             case unreachable:
                 assert_never(unreachable)
 
         model_fields = {
-            "subject": models.ForeignKey(
-                subject_model, on_delete=models.CASCADE, related_name="+", unique=subject_unique
-            ),
-            "object": models.ForeignKey(
-                object_model, on_delete=models.CASCADE, related_name="+", unique=object_unique
-            ),
+            "subject": models.ForeignKey(subject_model, on_delete=models.CASCADE, related_name="+"),
+            "object": models.ForeignKey(object_model, on_delete=models.CASCADE, related_name="+"),
             "__module__": cls.__module__,
             "Meta": type("Meta", (), meta_attrs),
         }
