@@ -110,6 +110,11 @@ Or map a fact onto an **existing** table:
 `@store(WorksFor, subject="employee_id", object="company_id", where=Q(active=True), readonly=True)`.
 Inferred facts need no `@store`.
 
+> **Migrating** from a version that generated `<Name>Storage` models? Declare
+> one explicit storage model per stored fact and bind it with `@store` — each is
+> a mechanical `subject`/`object` `ForeignKey` pair matching the fact's types, so
+> a coding agent can generate them from your fact definitions.
+
 ### Typed variables
 `Var` is parametric: `Var[Employee]("emp")` records that the variable stands
 for an `Employee`, so it only fits into `Employee`-typed slots. Create each
