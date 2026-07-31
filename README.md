@@ -18,34 +18,97 @@ pip install django-datalog
 ```
 
 ```python
-# settings.py
-INSTALLED_APPS = ['django_datalog']
+# settings.py — django-datalog has no models of its own; add it for the
+# management commands, and your own app holds the fact storage tables.
+INSTALLED_APPS = [..., "django_datalog", "your_app"]
 ```
 
-```bash
-python manage.py migrate
+You declare the storage tables for your stored facts in your own app (see Quick
+start), then migrate that app as usual — there are no library migrations to run.
+
+## Quick start
+
+```python
+# your_app/models.py
+from django.db import models
+from django_datalog.models import Fact, Term, Var, store, store_facts, query, exists, rule
+
+class Employee(models.Model):
+    name = models.CharField(max_length=100)
+
+class Company(models.Model):
+    name = models.CharField(max_length=100)
+
+# 1. Declare facts — the logical relations (a fact is just types + a name).
+class WorksFor(Fact):
+    subject: Term[Employee]
+    object:  Term[Company]
+
+class ColleaguesOf(Fact):   # inferred: derived by rules, no storage
+    subject: Term[Employee]
+    object:  Term[Employee]
+
+# 2. For each STORED fact, declare the Django model that holds its rows and bind
+#    it with @store. You own this table — its columns, indexes and constraints.
+@store(WorksFor)
+class WorksForStorage(models.Model):
+    subject = models.ForeignKey(Employee, on_delete=models.CASCADE, related_name="+")
+    object  = models.ForeignKey(Company,  on_delete=models.CASCADE, related_name="+")
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=["subject", "object"], name="worksfor_edge")]
+
+# 3. Migrate your app normally:  manage.py makemigrations && manage.py migrate
 ```
 
-> **📈 Performance Note**: All existing code automatically benefits from the new advanced query optimization system. No changes required - just upgrade and get better performance!
+```python
+# 4. Define inference rules (shared Var names are the join keys).
+a, b, c = Var[Employee]("a"), Var[Employee]("b"), Var[Company]("c")
+rule(ColleaguesOf(a, b), WorksFor(a, c) & WorksFor(b, c))
+
+# 5. Store facts and query.
+store_facts(WorksFor(subject=alice, object=acme), WorksFor(subject=bob, object=acme))
+
+list(query(ColleaguesOf(alice, Var[Employee]("x"))))   # -> [{'x': <Employee bob>}]
+exists(WorksFor(alice, acme))                           # -> True
+```
+
+A fact with no `@store` is **inferred** — it has no storage and is derived by rules.
 
 ## Core Concepts
 
 ### Facts
-Define facts as Python classes with Django model integration. Use `Term[X]`
-(a shorthand for `X | Var[X]`) for each slot — it reads as "an `X`, or a
-variable standing for an `X`":
+A fact is the logical relation. Use `Term[X]` (shorthand for `X | Var[X]`) for
+each slot — "an `X`, or a variable standing for an `X`":
 
 ```python
-from django_datalog.models import Fact, Term, Var
+from django_datalog.models import Fact, Term, Var, store
 
 class WorksFor(Fact):
     subject: Term[Employee]  # Employee
     object: Term[Company]    # Company
 
-class ColleaguesOf(Fact, inferred=True):  # Inferred facts can't be stored directly
+class ColleaguesOf(Fact):  # Inferred facts have no storage
     subject: Term[Employee]
     object: Term[Employee]
 ```
+
+A **stored** fact reads and writes an explicit Django model that you declare and
+bind with `@store` — you own the table, its migrations, indexes and constraints:
+
+```python
+@store(WorksFor)
+class WorksForStorage(models.Model):
+    subject = models.ForeignKey(Employee, on_delete=models.CASCADE, related_name="+")
+    object  = models.ForeignKey(Company,  on_delete=models.CASCADE, related_name="+")
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=["subject", "object"], name="worksfor_edge")]
+```
+
+Or map a fact onto an **existing** table:
+`@store(WorksFor, subject="employee_id", object="company_id", where=Q(active=True), readonly=True)`.
+Inferred facts need no `@store`.
 
 ### Typed variables
 `Var` is parametric: `Var[Employee]("emp")` records that the variable stands
@@ -298,9 +361,20 @@ class WorksOn(Fact):
     subject: Term[Employee]
     object: Term[Project]
 
-class ColleaguesOf(Fact, inferred=True):
+class ColleaguesOf(Fact):   # inferred: no storage
     subject: Term[Employee]
     object: Term[Employee]
+
+# storage.py — explicit models for the stored facts
+@store(WorksFor)
+class WorksForStorage(models.Model):
+    subject = models.ForeignKey(Employee, on_delete=models.CASCADE, related_name="+")
+    object  = models.ForeignKey(Company,  on_delete=models.CASCADE, related_name="+")
+
+@store(WorksOn)
+class WorksOnStorage(models.Model):
+    subject = models.ForeignKey(Employee, on_delete=models.CASCADE, related_name="+")
+    object  = models.ForeignKey(Project,  on_delete=models.CASCADE, related_name="+")
 
 # rules.py
 emp1, emp2 = Var[Employee]("emp1"), Var[Employee]("emp2")

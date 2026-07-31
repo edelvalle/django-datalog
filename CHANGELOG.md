@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### 💥 Breaking / Changed
+- **Explicit storage models — no more generated models.** A stored `Fact` no longer generates a `<Name>Storage` model in `__init_subclass__`. You declare the Django model yourself and bind it with `@store(<Fact>)`:
+
+  ```python
+  class WorksFor(Fact):
+      subject: Term[Employee]
+      object:  Term[Company]
+
+  @store(WorksFor)
+  class WorksForStorage(models.Model):
+      subject = models.ForeignKey(Employee, on_delete=models.CASCADE, related_name="+")
+      object  = models.ForeignKey(Company,  on_delete=models.CASCADE, related_name="+")
+      class Meta:
+          constraints = [models.UniqueConstraint(fields=["subject", "object"], name="worksfor_edge")]
+  ```
+
+  The storage tables now have a real model file, normal migrations, and you control their columns, indexes and constraints (which is what enables optimizer columns/indexes). `@store(<Fact>, subject=…, object=…, where=…, readonly=…)` can map a fact onto an existing table's columns.
+- **`inferred=True` is gone.** A fact is *inferred* precisely when it has no `@store` binding — so `class ColleaguesOf(Fact, inferred=True)` becomes just `class ColleaguesOf(Fact)`. A rule head must be an inferred (unbound) fact.
+- Removed: the model generator, the abstract `FactModel`, and the `unique=` / `Unique` API (constraints live on your model's `Meta` now). A stored fact used before it is bound, or written when `readonly`, raises a clear error.
+
 ## [0.5.3] - 2026-07-29
 
 ### 🚀 Features
