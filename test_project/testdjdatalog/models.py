@@ -110,6 +110,35 @@ class ProjectAssignment(models.Model):
 
 
 # Facts using Person model (for internal django_datalog tests)
+class Vessel(models.Model):
+    """A ship a user can crew aboard (used by the N-ary Crew relation)."""
+
+    name = models.CharField(max_length=100)
+
+    def __str__(self):
+        return self.name
+
+
+class Rank(models.TextChoices):
+    """A crew rank aboard a vessel (an arbitrary value, not an entity)."""
+
+    MASTER = "master", "Master"
+    CHIEF_MATE = "chief_mate", "Chief Mate"
+    FIRST_ENGINEER = "first_engineer", "First Engineer"
+
+
+class Crew(Fact):
+    """A user serves aboard a vessel with a rank (a ternary relation).
+
+    Mixes entity positions (``user``, ``vessel`` are FKs) with a value position
+    (``rank`` is a choices string, not a model).
+    """
+
+    user: Term[User]  # crew member (entity)
+    rank: Term[Rank]  # rank (a value: an enum member, not an entity)
+    vessel: Term[Vessel]  # vessel (entity)
+
+
 class ParentOf(Fact):
     """Person is parent of another person."""
 
@@ -245,6 +274,16 @@ class FactStorage(models.Model):
 
 def _fk(model):
     return models.ForeignKey(model, on_delete=models.CASCADE, related_name="+")
+
+
+@store(Crew)
+class CrewStorage(FactStorage):
+    user = _fk(User)
+    rank = models.CharField(max_length=32, choices=Rank.choices)
+    vessel = _fk(Vessel)
+
+    class Meta:
+        unique_together = (("user", "rank", "vessel"),)
 
 
 @store(ParentOf)
