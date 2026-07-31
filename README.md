@@ -5,6 +5,7 @@ A high-performance logic programming and inference engine for Django application
 ## ✨ Key Features
 
 - **🧠 Logic Programming**: Define facts and rules using intuitive Python syntax
+- **🔢 N-ary Relations**: Facts with any number of positions, mixing entities (FKs) and values
 - **🚀 Advanced Query Optimization**: AST-based analysis with up to 75% query reduction
 - **🔗 Cross-Variable Constraints**: Complex relational queries with automatic optimization
 - **🛡️ Security First**: 100% Django ORM - eliminates SQL injection vulnerabilities
@@ -114,6 +115,51 @@ Inferred facts need no `@store`.
 > one explicit storage model per stored fact and bind it with `@store` — each is
 > a mechanical `subject`/`object` `ForeignKey` pair matching the fact's types, so
 > a coding agent can generate them from your fact definitions.
+
+### N-ary relations
+A fact is not limited to two positions. Declare any positions you need, and mix
+**entity** positions (a FK to a Django model) with **value** positions (a typed
+value, e.g. an enum member). Every position is typed — use `Term[X]` so the
+position accepts an `X` or a `Var[X]`:
+
+```python
+class Rank(models.TextChoices):
+    MASTER = "master", "Master"
+    CHIEF_MATE = "chief_mate", "Chief Mate"
+
+class Crew(Fact):
+    user: Term[User]      # entity (FK)
+    rank: Term[Rank]      # value (an enum member, not a model)
+    vessel: Term[Vessel]  # entity (FK)
+
+@store(Crew)
+class CrewStorage(models.Model):
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="+")
+    rank = models.CharField(max_length=32, choices=Rank.choices)
+    vessel = models.ForeignKey(Vessel, on_delete=models.CASCADE, related_name="+")
+
+    class Meta:
+        unique_together = (("user", "rank", "vessel"),)
+```
+
+Everything works over the fact's positions:
+
+```python
+store_facts(Crew(user=alice, rank=Rank.MASTER, vessel=aurora))
+
+# Pin the value position; leave the entities free.
+masters = query(Crew(Var[User]("u"), Rank.MASTER, Var[Vessel]("v")))
+
+# Pin an entity; read the rest.
+alices_ranks = query(Crew(alice, Var[Rank]("r"), Var[Vessel]("v")))
+
+exists(Crew(alice, Rank.MASTER, aurora))                        # access-style check
+as_queryset(Crew(alice, Rank.MASTER, Var[Vessel]("v")), on="vessel")  # queryset of vessels
+```
+
+A value position stays its value through hydration. An entity position hydrates
+to its model instance and accepts a `where` constraint. Binary `subject`/`object`
+facts are unchanged and keep every query optimization.
 
 ### Typed variables
 `Var` is parametric: `Var[Employee]("emp")` records that the variable stands

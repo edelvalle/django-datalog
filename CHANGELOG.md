@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.1] - 2026-07-31
+
+### 🚀 Features
+- **N-ary relations — a fact can have more than two positions.** A `Fact` is no longer limited to `subject`/`object`. Declare any positions you need, and mix entity positions (a FK to a Django model) with value positions (a typed value, e.g. an enum member). Every position stays typed — use `Term[X]` so it accepts an `X` or a `Var[X]`:
+
+  ```python
+  class Crew(Fact):
+      user: Term[User]      # entity (FK)
+      rank: Term[Rank]      # value (an enum member, not a model)
+      vessel: Term[Vessel]  # entity (FK)
+
+  @store(Crew)
+  class CrewStorage(models.Model):
+      user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="+")
+      rank = models.CharField(max_length=32, choices=Rank.choices)
+      vessel = models.ForeignKey(Vessel, on_delete=models.CASCADE, related_name="+")
+      class Meta:
+          unique_together = (("user", "rank", "vessel"),)
+  ```
+
+  Query, `store_facts`, `retract_facts`, `exists`/`first`, `as_queryset`, and rule bodies/heads all work over the fact's positions. A value position pins a filter (`Crew(Var[User]("u"), Rank.MASTER, Var[Vessel]("v"))`) and stays its value through hydration. An entity position hydrates to its model instance and accepts a `where` constraint. `as_queryset(..., on=<position>)` takes any position name.
+- Binary facts (`subject`/`object`) are unchanged and keep all query optimizations. The goal-directed and ORM-conversion optimizers apply to binary relations. An N-ary relation uses the correct fixpoint evaluator.
+
 ## [0.6.0] - 2026-07-29
 
 ### 💥 Breaking / Changed
