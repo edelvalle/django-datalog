@@ -285,54 +285,44 @@ def _find_bindings_for_condition(condition: Any, known_facts: list[Fact]) -> lis
 
 
 def _unify_facts(pattern_fact: Fact, concrete_fact: Fact) -> dict[str, Any] | None:
-    """Unify a pattern fact (with variables) against a concrete fact."""
+    """Unify a pattern fact (with variables) against a concrete fact.
+
+    Iterates over every position of the relation (subject/object for a binary
+    fact, or arbitrary fields for an N-ary one). Compares concrete positions by
+    pk so a model-instance pattern matches a fact that carries a pk (a fact
+    mapped onto an existing table), and vice versa.
+    """
     bindings = {}
 
-    # Compare concrete positions by pk so a model-instance pattern matches a
-    # fact that carries a pk (a fact mapped onto an existing table), and vice
-    # versa. For dedicated storage (both instances) this is equivalent.
-    # Check subject
-    if isinstance(pattern_fact.subject, Var):
-        bindings[pattern_fact.subject.name] = concrete_fact.subject
-    elif _binding_key(pattern_fact.subject) != _binding_key(concrete_fact.subject):
-        return None  # Subjects don't match
-
-    # Check object
-    if isinstance(pattern_fact.object, Var):
-        var_name = pattern_fact.object.name
-        # Check for conflicting bindings
-        if var_name in bindings and _binding_key(bindings[var_name]) != _binding_key(
-            concrete_fact.object
-        ):
-            return None
-        bindings[var_name] = concrete_fact.object
-    elif _binding_key(pattern_fact.object) != _binding_key(concrete_fact.object):
-        return None  # Objects don't match
+    for position in pattern_fact._positions:
+        pattern_value = getattr(pattern_fact, position)
+        concrete_value = getattr(concrete_fact, position)
+        if isinstance(pattern_value, Var):
+            var_name = pattern_value.name
+            if var_name in bindings and _binding_key(bindings[var_name]) != _binding_key(
+                concrete_value
+            ):
+                return None  # Conflicting binding for the same variable
+            bindings[var_name] = concrete_value
+        elif _binding_key(pattern_value) != _binding_key(concrete_value):
+            return None  # Concrete position does not match
 
     return bindings
 
 
 def _instantiate_fact(pattern_fact: Fact, bindings: dict[str, Any]) -> Fact | None:
     """Create a concrete fact by substituting variables with their bindings."""
-    # Substitute subject
-    if isinstance(pattern_fact.subject, Var):
-        if pattern_fact.subject.name not in bindings:
-            return None  # Unbound variable
-        subject = bindings[pattern_fact.subject.name]
-    else:
-        subject = pattern_fact.subject
+    values = {}
+    for position in pattern_fact._positions:
+        pattern_value = getattr(pattern_fact, position)
+        if isinstance(pattern_value, Var):
+            if pattern_value.name not in bindings:
+                return None  # Unbound variable
+            values[position] = bindings[pattern_value.name]
+        else:
+            values[position] = pattern_value
 
-    # Substitute object
-    if isinstance(pattern_fact.object, Var):
-        if pattern_fact.object.name not in bindings:
-            return None  # Unbound variable
-        obj = bindings[pattern_fact.object.name]
-    else:
-        obj = pattern_fact.object
-
-    # Create new fact instance of the same type
-    fact_class = type(pattern_fact)
-    return fact_class(subject=subject, object=obj)
+    return type(pattern_fact)(**values)
 
 
 def rule_context(func=None):

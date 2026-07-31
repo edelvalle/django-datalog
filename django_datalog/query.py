@@ -10,7 +10,7 @@ from typing import Any
 from asgiref.sync import sync_to_async
 from django.db.models import Q
 
-from .facts import Fact
+from .facts import Fact, _column_of
 from .optimizer import optimize_query, time_fact_execution
 from .rules import (
     Rule,
@@ -21,6 +21,34 @@ from .rules import (
     get_rules,
 )
 from .variables import Var, has_variable_references, substitute_variables_in_q
+
+
+def _is_binary(fact_type) -> bool:
+    """True for a classic binary relation (subject/object positions)."""
+    return fact_type._positions == ("subject", "object")
+
+
+def _positions(fact) -> tuple[str, ...]:
+    """Ordered position names of a fact or fact type."""
+    return fact._positions
+
+
+def _model_relation_field(django_model, column: str) -> str | None:
+    """Return the relation field name to ``select_related`` for a column, or None.
+
+    A column that names a concrete FK loads its related instance (so
+    where-constraints and hydration see a real object). An attname (``…_id``) or
+    a plain value column has no relation field and is read as a raw value.
+    """
+    try:
+        field = django_model._meta.get_field(column)
+    except Exception:
+        return None
+    # Only the relation's own field name loads instances; its attname
+    # (e.g. "company_id") reads a raw pk and must stay a value column.
+    if getattr(field, "is_relation", False) and field.concrete and field.name == column:
+        return column
+    return None
 
 
 def query(*fact_patterns: Fact, hydrate: bool = True) -> Iterator[dict[str, Any]]:
@@ -105,16 +133,20 @@ def as_queryset(pattern: Fact, *, on: str = "object", model=None):
         qs = as_queryset(CanAccessVessel(user, Var("v")), on="object")
         qs = qs.filter(active=True).order_by("name")
 
-    ``model`` defaults to the Django model declared for that position of the
-    fact. The matching ids are materialized once (cheap for bound queries);
-    the returned queryset itself is not evaluated until the caller uses it.
+    ``on`` names a position of the fact (``"subject"``/``"object"`` for a binary
+    relation, any field for an N-ary one). ``model`` defaults to the Django model
+    declared for that position. The matching ids are materialized once (cheap for
+    bound queries); the returned queryset itself is not evaluated until the
+    caller uses it.
     """
-    if on not in ("subject", "object"):
-        raise ValueError(f"`on` must be 'subject' or 'object', got {on!r}")
+    if on not in type(pattern)._positions:
+        raise ValueError(
+            f"`on` must be a position of {type(pattern).__name__} "
+            f"{type(pattern)._positions}, got {on!r}"
+        )
 
     if model is None:
-        subject_model, object_model = _get_fact_field_types(type(pattern))
-        model = subject_model if on == "subject" else object_model
+        model = _position_model_type(type(pattern), on)
         if model is None:
             raise ValueError(
                 f"Could not infer a model for {type(pattern).__name__}.{on}; "
@@ -186,7 +218,7 @@ def _satisfy_conjunction_with_targeted_facts(conditions, bindings, original_cond
     """Satisfy a conjunction using targeted fact loading - only load facts relevant to the query."""
     if original_conditions is None:
         original_conditions = conditions[:]
-    
+
     # Check if we can optimize this query with automatic ORM conversion
     # PERFORMANCE NOTE: Auto-converts to pure Django ORM when possible (up to 92% query reduction)
     # SECURITY: Uses Django ORM exclusively - NO SQL injection risk
@@ -198,7 +230,7 @@ def _satisfy_conjunction_with_targeted_facts(conditions, bindings, original_cond
             # Fall back to original approach if ORM conversion fails
             # Common reasons: complex patterns, missing models, unsupported constraints
             pass
-        
+
     if not conditions:
         # All conditions satisfied - now validate cross-variable constraints
         if _validate_cross_variable_constraints(original_conditions, bindings):
@@ -303,7 +335,7 @@ def _iter_inferred_lazy(
                 continue
             if fact is None or type(fact) is not target_type:
                 continue
-            key = (target_type, _binding_key(fact.subject), _binding_key(fact.object))
+            key = (target_type, *(_binding_key(getattr(fact, p)) for p in fact._positions))
             if key not in seen:
                 seen.add(key)
                 yield fact
@@ -319,7 +351,6 @@ def _load_stored_facts_for_pattern(pattern: Fact) -> list[Fact]:
             return []
 
         django_model = fact_class._django_model
-        subject_col, object_col = fact_class._subject_col, fact_class._object_col
 
         query_params, q_objects = _fact_to_django_query(pattern)
         queryset = django_model.objects.all()
@@ -330,16 +361,33 @@ def _load_stored_facts_for_pattern(pattern: Fact) -> list[Fact]:
         for q_obj in q_objects:
             queryset = queryset.filter(q_obj)
 
-        if subject_col == "subject" and object_col == "object":
-            # Dedicated storage: subject/object are FK fields -> load instances.
-            queryset = queryset.select_related("subject", "object")
-            return [fact_class(subject=i.subject, object=i.object) for i in queryset]
+        # Per position: an FK column loads its related instance (so
+        # where-constraints and hydration see a real object); a value column or
+        # an attname (…_id) reads the raw value. Facts unify by pk, so either
+        # form is sound.
+        relation_positions = {}  # position -> relation field to select_related
+        value_positions = {}  # position -> raw column name
+        for position in fact_class._positions:
+            column = _column_of(fact_class, position)
+            relation_field = _model_relation_field(django_model, column)
+            if relation_field is not None:
+                relation_positions[position] = relation_field
+            else:
+                value_positions[position] = column
 
-        # Mapped columns: read the mapped values as pks; facts unify by pk and
-        # hydration resolves them from the position model types later.
+        if relation_positions:
+            queryset = queryset.select_related(*relation_positions.values())
+            facts = []
+            for instance in queryset:
+                values = {p: getattr(instance, f) for p, f in relation_positions.items()}
+                values.update({p: getattr(instance, c) for p, c in value_positions.items()})
+                facts.append(fact_class(**values))
+            return facts
+
+        columns = {p: _column_of(fact_class, p) for p in fact_class._positions}
         return [
-            fact_class(subject=row[subject_col], object=row[object_col])
-            for row in queryset.values(subject_col, object_col)
+            fact_class(**{p: row[c] for p, c in columns.items()})
+            for row in queryset.values(*columns.values())
         ]
 
     except (AttributeError, Exception):
@@ -397,21 +445,21 @@ def _apply_rules_with_hidden_variables(
 
 def _free_inferred_pattern(fact_type: type) -> Fact:
     """Build an all-variable pattern for an inferred fact type (its full extension)."""
-    return fact_type(subject=Var("_s"), object=Var("_o"))
+    return fact_type(**{position: Var(f"_{position}") for position in fact_type._positions})
 
 
 def _target_has_concrete_position(pattern: Fact) -> bool:
-    """True if the query pins subject or object to a concrete value."""
-    return not isinstance(pattern.subject, Var) or not isinstance(pattern.object, Var)
+    """True if the query pins any position to a concrete value."""
+    return any(not isinstance(getattr(pattern, p), Var) for p in pattern._positions)
 
 
 def _unify_head_with_target(head: Fact, target: Fact) -> dict[str, Any]:
     """Map rule-head variable names to the target pattern's value at that position."""
     substitution = {}
-    if isinstance(head.subject, Var):
-        substitution[head.subject.name] = target.subject
-    if isinstance(head.object, Var):
-        substitution[head.object.name] = target.object
+    for position in head._positions:
+        head_value = getattr(head, position)
+        if isinstance(head_value, Var):
+            substitution[head_value.name] = getattr(target, position)
     return substitution
 
 
@@ -423,7 +471,9 @@ def _apply_head_sub_to_condition(condition: Fact, head_sub: dict[str, Any]) -> F
             return head_sub.get(pos.name, pos)
         return pos
 
-    return type(condition)(subject=build(condition.subject), object=build(condition.object))
+    return type(condition)(
+        **{p: build(getattr(condition, p)) for p in condition._positions}
+    )
 
 
 def _canonicalize_position(pos, head_sub: dict[str, Any]):
@@ -443,8 +493,8 @@ def _canonicalize_position(pos, head_sub: dict[str, Any]):
 def _bound_score(condition: Fact, head_sub: dict[str, Any], env: dict[str, set]) -> int:
     """How many of this condition's positions are already bound (const or in env)."""
     score = 0
-    for pos in (condition.subject, condition.object):
-        canon = _canonicalize_position(pos, head_sub)
+    for position in condition._positions:
+        canon = _canonicalize_position(getattr(condition, position), head_sub)
         if canon[0] == "const" or (canon[0] == "var" and canon[1] in env):
             score += 1
     return score
@@ -464,19 +514,21 @@ def _sip_load_pattern(condition: Fact, head_sub: dict[str, Any], env: dict[str, 
             constraint = in_q if constraint is None else (constraint & in_q)
         return Var(name, where=constraint)
 
-    return type(condition)(subject=build(condition.subject), object=build(condition.object))
+    return type(condition)(
+        **{p: build(getattr(condition, p)) for p in condition._positions}
+    )
 
 
 def _gather_env(
     condition: Fact, rows: list[Fact], head_sub: dict[str, Any], env: dict[str, set]
 ) -> None:
     """Record the pk values each join variable took, intersecting with prior candidates."""
-    for pos, attr in ((condition.subject, "subject"), (condition.object, "object")):
-        canon = _canonicalize_position(pos, head_sub)
+    for attr in condition._positions:
+        canon = _canonicalize_position(getattr(condition, attr), head_sub)
         if canon[0] != "var":
             continue
         name = canon[1]
-        values = {getattr(getattr(r, attr), "pk", getattr(r, attr)) for r in rows}
+        values = {_binding_key(getattr(r, attr)) for r in rows}
         env[name] = values if name not in env else (env[name] & values)
 
 
@@ -559,7 +611,7 @@ def _build_targeted_fact_base_for_rules(
     seen = set()
     unique_facts = []
     for fact in targeted_facts:
-        fact_key = (type(fact), fact.subject, fact.object)
+        fact_key = (type(fact), *(_binding_key(getattr(fact, p)) for p in fact._positions))
         if fact_key not in seen:
             seen.add(fact_key)
             unique_facts.append(fact)
@@ -571,58 +623,33 @@ def _create_targeted_condition(condition: Fact, target_pattern: Fact) -> Fact:
     """Create a targeted version of a rule condition with hidden variables for unbound vars."""
     condition_class = type(condition)
 
-    # For unbound variables in the condition, create hidden variables
-    # This allows the existing system to handle them as unconstrained queries
-    new_subject = condition.subject
-    new_object = condition.object
+    # For a variable that does not appear in the target pattern, substitute a
+    # unique hidden variable so the existing system treats it as unconstrained.
+    values = {}
+    for position in condition._positions:
+        value = getattr(condition, position)
+        if isinstance(value, Var) and not _variable_in_pattern(value.name, target_pattern):
+            value = Var(f"hidden_{uuid.uuid4().hex[:8]}")
+        values[position] = value
 
-    if isinstance(condition.subject, Var):
-        # Check if this variable appears in the target pattern
-        if not _variable_in_pattern(condition.subject.name, target_pattern):
-            # Create hidden variable - unconstrained but with unique name
-            hidden_name = f"hidden_{uuid.uuid4().hex[:8]}"
-            new_subject = Var(hidden_name)
-
-    if isinstance(condition.object, Var):
-        # Check if this variable appears in the target pattern
-        if not _variable_in_pattern(condition.object.name, target_pattern):
-            # Create hidden variable - unconstrained but with unique name
-            hidden_name = f"hidden_{uuid.uuid4().hex[:8]}"
-            new_object = Var(hidden_name)
-
-    return condition_class(subject=new_subject, object=new_object)
+    return condition_class(**values)
 
 
 def _variable_in_pattern(var_name: str, pattern: Fact) -> bool:
     """Check if a variable name appears in a fact pattern."""
-    if isinstance(pattern.subject, Var) and pattern.subject.name == var_name:
-        return True
-    if isinstance(pattern.object, Var) and pattern.object.name == var_name:
-        return True
+    for position in pattern._positions:
+        value = getattr(pattern, position)
+        if isinstance(value, Var) and value.name == var_name:
+            return True
     return False
 
 
-def _get_fact_field_types(fact_type):
-    """Get the Django model types for subject and object fields of a fact type."""
-    # Use the cached model types from the Fact class
-    if hasattr(fact_type, "_model_types_cache"):
-        cache = fact_type._model_types_cache
-        return cache.get("subject"), cache.get("object")
-
-    # Fallback: extract from type annotations
-
-    fact_fields = fields(fact_type)
-    subject_field = next((f for f in fact_fields if f.name == "subject"), None)
-    object_field = next((f for f in fact_fields if f.name == "object"), None)
-
-    if not subject_field or not object_field:
-        raise ValueError(f"Fact type {fact_type} missing subject or object field")
-
-    # Extract Django model types from Union annotations (like Person | Var)
-    subject_type = _extract_model_type_from_annotation(subject_field.type)
-    object_type = _extract_model_type_from_annotation(object_field.type)
-
-    return subject_type, object_type
+def _position_model_type(fact_type, position: str):
+    """Django model type declared for a fact position, or None for a value position."""
+    field = next((f for f in fields(fact_type) if f.name == position), None)
+    if field is None:
+        raise ValueError(f"Fact type {fact_type} has no position {position!r}")
+    return _extract_model_type_from_annotation(field.type)
 
 
 def _extract_model_type_from_annotation(type_annotation):
@@ -644,7 +671,7 @@ def _query_against_facts(pattern: Fact, facts: list[Fact], existing_bindings: di
     """Query a pattern against a set of in-memory facts with timing feedback."""
     if existing_bindings is None:
         existing_bindings = {}
-        
+
     with time_fact_execution(pattern):
         pattern_type = type(pattern)
         # Yield matches as they are found (not collect-then-yield) so a consumer
@@ -660,105 +687,72 @@ def _query_against_facts(pattern: Fact, facts: list[Fact], existing_bindings: di
 
 
 def _unify_fact_pattern(pattern: Fact, concrete_fact: Fact, existing_bindings: dict[str, Any] = None, skip_cross_var_constraints: bool = False) -> dict[str, Any] | None:
-    """Unify a fact pattern (with variables) against a concrete fact."""
+    """Unify a fact pattern (with variables) against a concrete fact.
+
+    Iterates over every position of the relation (subject/object for a binary
+    fact, arbitrary fields for an N-ary one). A concrete position must match by
+    pk; a variable position binds to the concrete value and, when it carries a
+    ``where`` constraint, that constraint must hold.
+    """
     if existing_bindings is None:
         existing_bindings = {}
-    
-    
+
     substitution = {}
 
-    # Check subject
-    if isinstance(pattern.subject, Var):
-        # Check if subject meets the variable's constraints
-        if pattern.subject.where is not None:
-            # Skip cross-variable constraint checking if requested
-            if skip_cross_var_constraints and has_variable_references(pattern.subject.where):
-                pass  # Skip constraint checking
-            elif not _check_q_constraint_with_bindings(
-                concrete_fact.subject, pattern.subject.where, existing_bindings
-            ):
-                return None  # Subject doesn't meet constraints
+    for position in pattern._positions:
+        pattern_value = getattr(pattern, position)
+        concrete_value = getattr(concrete_fact, position)
 
-        substitution[pattern.subject.name] = (
-            concrete_fact.subject.pk
-            if hasattr(concrete_fact.subject, "pk")
-            else concrete_fact.subject
-        )
-    elif _binding_key(pattern.subject) != _binding_key(concrete_fact.subject):
-        return None  # Subjects don't match (compare by pk)
+        if not isinstance(pattern_value, Var):
+            if _binding_key(pattern_value) != _binding_key(concrete_value):
+                return None  # Concrete position does not match (compare by pk)
+            continue
 
-    # Check object
-    if isinstance(pattern.object, Var):
-        # Check if object meets the variable's constraints
-        if pattern.object.where is not None:
-            # Skip cross-variable constraint checking if requested
-            if skip_cross_var_constraints and has_variable_references(pattern.object.where):
-                pass  # Skip constraint checking
+        # Variable position: check its constraint, then bind.
+        if pattern_value.where is not None:
+            if skip_cross_var_constraints and has_variable_references(pattern_value.where):
+                pass  # Defer cross-variable constraints to a later validation pass
             else:
-                # Combine existing bindings with new substitutions for constraint checking
                 combined_bindings = {**existing_bindings, **substitution}
-                constraint_result = _check_q_constraint_with_bindings(
-                    concrete_fact.object, pattern.object.where, combined_bindings
-                )
-                if not constraint_result:
-                    return None  # Object doesn't meet constraints
+                if not _check_q_constraint_with_bindings(
+                    concrete_value, pattern_value.where, combined_bindings
+                ):
+                    return None  # Value does not meet the constraint
 
-        var_name = pattern.object.name
-        obj_value = (
-            concrete_fact.object.pk if hasattr(concrete_fact.object, "pk") else concrete_fact.object
-        )
-        # Check for conflicting bindings
-        if var_name in substitution and substitution[var_name] != obj_value:
-            return None
-        substitution[var_name] = obj_value
-    elif _binding_key(pattern.object) != _binding_key(concrete_fact.object):
-        return None  # Objects don't match (compare by pk)
+        var_name = pattern_value.name
+        value = concrete_value.pk if hasattr(concrete_value, "pk") else concrete_value
+        if var_name in substitution and substitution[var_name] != value:
+            return None  # Conflicting binding for the same variable
+        substitution[var_name] = value
 
     return substitution
 
 
 def _validate_cross_variable_constraints(conditions: list[Fact], bindings: dict[str, Any]) -> bool:
     """Validate all cross-variable constraints after full conjunction is satisfied."""
-    # Collect all patterns with cross-variable constraints
-    patterns_with_cross_var_constraints = []
-    
+    # Collect all (condition, position) pairs carrying a cross-variable constraint.
+    constrained_positions = []
     for condition in conditions:
-        if isinstance(condition.subject, Var) and condition.subject.where and has_variable_references(condition.subject.where):
-            patterns_with_cross_var_constraints.append((condition, 'subject'))
-        if isinstance(condition.object, Var) and condition.object.where and has_variable_references(condition.object.where):
-            patterns_with_cross_var_constraints.append((condition, 'object'))
-    
+        for position in condition._positions:
+            value = getattr(condition, position)
+            if isinstance(value, Var) and value.where and has_variable_references(value.where):
+                constrained_positions.append((condition, position))
+
     # If no cross-variable constraints, validation passes
-    if not patterns_with_cross_var_constraints:
+    if not constrained_positions:
         return True
-    
-    # For each cross-variable constraint, check if it's satisfied
-    for pattern, field_type in patterns_with_cross_var_constraints:
-        if field_type == 'subject':
-            var = pattern.subject
-            # Find the actual model instance for this variable
-            if var.name in bindings:
-                # Get the model type from the pattern's field annotation
-                model_type = _extract_model_type_from_annotation(
-                    pattern.__dataclass_fields__['subject'].type
-                )
-                # Get the model instance from bindings (might need hydration)  
-                model_instance = _get_model_instance_from_binding(bindings[var.name], model_type)
-                if not _check_q_constraint_with_bindings(model_instance, var.where, bindings):
-                    return False
-        elif field_type == 'object':
-            var = pattern.object
-            # Find the actual model instance for this variable
-            if var.name in bindings:
-                # Get the model type from the pattern's field annotation
-                model_type = _extract_model_type_from_annotation(
-                    pattern.__dataclass_fields__['object'].type
-                )
-                # Get the model instance from bindings (might need hydration)
-                model_instance = _get_model_instance_from_binding(bindings[var.name], model_type)
-                if not _check_q_constraint_with_bindings(model_instance, var.where, bindings):
-                    return False
-    
+
+    for pattern, position in constrained_positions:
+        var = getattr(pattern, position)
+        if var.name in bindings:
+            model_type = _extract_model_type_from_annotation(
+                pattern.__dataclass_fields__[position].type
+            )
+            # Get the model instance from bindings (might need hydration)
+            model_instance = _get_model_instance_from_binding(bindings[var.name], model_type)
+            if not _check_q_constraint_with_bindings(model_instance, var.where, bindings):
+                return False
+
     return True
 
 
@@ -806,22 +800,22 @@ def _check_q_constraint_with_bindings(model_instance, q_constraint, bindings: di
                 except Exception:
                     # If we can't resolve the variable, constraint fails
                     return False
-            
+
             # Substitute variables in the constraint
             resolved_constraint = substitute_variables_in_q(q_constraint, model_bindings)
-            
+
             # Check if any variables remain unresolved
             if has_variable_references(resolved_constraint):
                 # Can't evaluate constraint yet - variables still unbound
                 return True  # Defer constraint checking
         else:
             resolved_constraint = q_constraint
-        
+
         # Convert the Q constraint to a filter and check if the instance matches
         queryset = model_instance.__class__.objects.filter(resolved_constraint)
         # Check if this specific instance matches the constraint
         result = queryset.filter(pk=model_instance.pk).exists()
-        
+
         return result
     except Exception:
         # If there's any error with the constraint check, assume it fails
@@ -870,7 +864,8 @@ def _query_single_fact(fact_pattern: Fact) -> Iterator[dict[str, Any]]:
             queryset = queryset.filter(q_obj)
 
         # Query the database with values() to get PKs
-        for values_dict in queryset.values("subject", "object"):
+        columns = [_column_of(fact_class, p) for p in fact_class._positions]
+        for values_dict in queryset.values(*columns):
             substitution = _django_result_to_substitution(fact_pattern, values_dict)
             yield substitution
 
@@ -883,15 +878,15 @@ def _fact_to_django_query(fact: Fact) -> tuple[dict[str, Any], list[Any]]:
         tuple: (query_params, q_objects) where q_objects are constraints for Vars
     """
     fact_class = type(fact)
-    # For a fact mapped onto an existing table these are its real columns
-    # (e.g. "employee_id"); for dedicated storage they are "subject"/"object".
-    subject_col = getattr(fact_class, "_subject_col", "subject")
-    object_col = getattr(fact_class, "_object_col", "object")
 
     query_params = {}
     q_objects = []
 
-    for position, column in ((fact.subject, subject_col), (fact.object, object_col)):
+    for name in fact_class._positions:
+        position = getattr(fact, name)
+        # For a fact mapped onto an existing table this is its real column
+        # (e.g. "employee_id"); for dedicated storage it is the position name.
+        column = _column_of(fact_class, name)
         if not isinstance(position, Var):
             # Concrete position filters on the column; a mapped FK attname
             # (…_id) takes the pk, a plain FK field takes the instance.
@@ -955,56 +950,57 @@ def _prefix_q_object(q_obj, prefix: str):
 
 def _django_result_to_substitution(fact: Fact, values_dict: dict) -> dict[str, Any]:
     """Convert Django query result to variable substitution."""
+    fact_class = type(fact)
     substitution = {}
-    if isinstance(fact.subject, Var):
-        # values_dict contains PKs from ForeignKey fields
-        substitution[fact.subject.name] = values_dict["subject"]
-    if isinstance(fact.object, Var):
-        # values_dict contains PKs from ForeignKey fields
-        substitution[fact.object.name] = values_dict["object"]
+    for name in fact_class._positions:
+        position = getattr(fact, name)
+        if isinstance(position, Var):
+            # values_dict holds the column value (a pk for FK columns)
+            substitution[position.name] = values_dict[_column_of(fact_class, name)]
     return substitution
 
 
 def _has_cross_variable_constraints(conditions: list[Fact]) -> bool:
     """Check if any conditions have cross-variable constraints."""
     for condition in conditions:
-        if isinstance(condition.subject, Var) and condition.subject.where and has_variable_references(condition.subject.where):
-            return True
-        if isinstance(condition.object, Var) and condition.object.where and has_variable_references(condition.object.where):
-            return True
+        for position in condition._positions:
+            value = getattr(condition, position)
+            if isinstance(value, Var) and value.where and has_variable_references(value.where):
+                return True
     return False
 
 
 def _try_automatic_orm_conversion(conditions: list[Fact]) -> Iterator[dict[str, Any]]:
     """Try to automatically convert django-datalog query to optimized Django ORM.
-    
+
     PERFORMANCE IMPACT: Can achieve significant query reduction through advanced analysis
     SECURITY STATUS: ✅ SECURE - Uses Django ORM exclusively
-    
+
     Uses advanced AST analysis and execution planning to handle complex patterns.
     Falls back to original approach only when analysis fails completely.
     """
-    
+
     # Only handle stored facts (bound to a model).
     for condition in conditions:
         fact_class = type(condition)
         if fact_class._django_model is None:
             raise NotImplementedError("ORM conversion only supports stored facts")
-        # The advanced analyzer assumes literal subject/object fields; a fact
-        # mapped onto other columns goes through the column-aware loader instead.
-        if fact_class._subject_col != "subject" or fact_class._object_col != "object":
-            raise NotImplementedError("ORM conversion not supported for column-mapped facts")
+        # The advanced analyzer assumes a binary relation with literal
+        # subject/object fields; N-ary or column-mapped facts go through the
+        # column-aware loader instead.
+        if not _is_binary(fact_class) or fact_class._columns:
+            raise NotImplementedError("ORM conversion only supports binary, non-mapped facts")
         # The advanced analyzer models variable positions only; it does not
         # apply a concrete (non-Var) subject/object as a filter. Defer such
         # patterns to the fallback loader, which filters concrete values
         # correctly, to avoid returning unfiltered rows.
         if not isinstance(condition.subject, Var) or not isinstance(condition.object, Var):
             raise NotImplementedError("ORM conversion only supports variable positions")
-    
+
     # Try advanced AST-based analysis first
     try:
         from .query_analyzer import build_advanced_orm_query
-        
+
         advanced_queryset = build_advanced_orm_query(conditions)
         if advanced_queryset is not None:
             # Execute advanced query and convert results
@@ -1013,49 +1009,49 @@ def _try_automatic_orm_conversion(conditions: list[Fact]) -> Iterator[dict[str, 
     except Exception:
         # Advanced analysis failed, try simple approach
         pass
-    
+
     # All ORM optimizations failed, use original approach
     raise NotImplementedError("Advanced analysis could not optimize this query pattern")
 
 
 def _execute_advanced_orm_query(queryset, conditions: list[Fact]) -> Iterator[dict[str, Any]]:
     """Execute the advanced ORM query and convert results back to django-datalog format."""
-    
+
     # The advanced analyzer returns instances from the primary fact storage model
     # We need to reconstruct the full variable bindings by looking up related facts
-    
+
     for primary_instance in queryset:
         # The primary instance gives us some variables
         # We need to find the values for all variables across all conditions
-        
+
         result = {}
-        
+
         # Extract variables from the primary instance
         for condition in conditions:
             fact_storage_model = type(condition)._django_model
-            
+
             if isinstance(primary_instance, fact_storage_model):
                 # This is the primary fact - extract its variables
                 if isinstance(condition.subject, Var):
                     var_name = condition.subject.name
                     result[var_name] = primary_instance.subject.pk
-                
+
                 if isinstance(condition.object, Var):
                     var_name = condition.object.name
                     result[var_name] = primary_instance.object.pk
-                    
+
                 break  # Found the primary fact
-        
+
         # Use annotations from the optimized query to get all variable values
         # The advanced analyzer has added subquery annotations for all non-primary facts
-        
+
         for condition in conditions:
             fact_storage_model = type(condition)._django_model
-            
+
             # Skip the primary fact (already processed)
             if isinstance(primary_instance, fact_storage_model):
                 continue
-            
+
             # For other facts, use the annotation added by _add_result_annotations
             if isinstance(condition.object, Var):
                 var_name = condition.object.name
@@ -1066,7 +1062,7 @@ def _execute_advanced_orm_query(queryset, conditions: list[Fact]) -> Iterator[di
                         annotated_value = getattr(primary_instance, annotation_name)
                         if annotated_value is not None:
                             result[var_name] = annotated_value
-        
+
         # Check if we found all expected variables
         expected_vars = set()
         for condition in conditions:
@@ -1074,30 +1070,30 @@ def _execute_advanced_orm_query(queryset, conditions: list[Fact]) -> Iterator[di
                 expected_vars.add(condition.subject.name)
             if isinstance(condition.object, Var):
                 expected_vars.add(condition.object.name)
-        
+
         if set(result.keys()) == expected_vars:
             yield result
 
 
 def _execute_simple_orm_optimization(conditions: list[Fact]) -> Iterator[dict[str, Any]]:
     """Execute simple ORM optimization for basic patterns only."""
-    
+
     # This handles only the simplest cases - single fact patterns with basic constraints
     if len(conditions) != 1:
         raise NotImplementedError("Only single-fact patterns supported")
-    
+
     condition = conditions[0]
     fact_class = type(condition)
     django_model = fact_class._django_model
-    
+
     # Convert the fact to a Django query
     query_params, q_objects = _fact_to_django_query(condition)
-    
+
     # Build and execute the query
     queryset = django_model.objects.filter(**query_params)
     for q_obj in q_objects:
         queryset = queryset.filter(q_obj)
-    
+
     # Convert results back to django-datalog format (PKs)
     for instance in queryset.values('subject', 'object'):
         result = {}
@@ -1120,7 +1116,7 @@ def _execute_simple_orm_optimization(conditions: list[Fact]) -> Iterator[dict[st
 
 def _map_variable_to_field(var_name: str) -> str:
     """Map variable names to Django model field names.
-    
+
     This is a dynamic mapping that uses the variable name directly.
     No hardcoded mappings - let Django ORM handle field resolution.
     """
@@ -1131,11 +1127,11 @@ def _is_simple_cross_variable_constraint(q_obj) -> bool:
     """Check if this is a simple cross-variable constraint like Q(company=Var('company'))."""
     if not hasattr(q_obj, 'children') or len(q_obj.children) != 1:
         return False
-    
+
     child = q_obj.children[0]
     if not isinstance(child, tuple) or len(child) != 2:
         return False
-        
+
     field_name, value = child
     return isinstance(value, Var)
 
@@ -1168,9 +1164,11 @@ def _hydrate_results(pk_results: list[dict], fact_patterns: list[Fact]) -> Itera
     var_to_model_type = {}
     pks_to_hydrate = {}
 
-    # First pass: discover what models each variable represents
+    # First pass: discover what models each variable represents. Only positions
+    # typed as a Django model hydrate; value positions (a rank, a string) stay
+    # as their raw value.
     for fact_pattern in fact_patterns:
-        for field_name in ["subject", "object"]:
+        for field_name in type(fact_pattern)._positions:
             field_val = getattr(fact_pattern, field_name)
             if isinstance(field_val, Var):
                 var_name = field_val.name

@@ -78,31 +78,30 @@ class ConstraintPropagator:
         return new_patterns
 
     def _update_pattern_constraints(self, pattern: Fact, merged_constraints: dict[str, Q]) -> Fact:
-        """Update a single pattern with merged constraints."""
-        # Create a new pattern with updated variables
-        updated_subject = self._update_variable_constraint(pattern.subject, merged_constraints)
-        updated_object = self._update_variable_constraint(pattern.object, merged_constraints)
-
-        # Create new fact instance with updated variables
+        """Update a single pattern with merged constraints (over all positions)."""
         pattern_class = type(pattern)
-        return pattern_class(subject=updated_subject, object=updated_object)
+        values = {
+            position: self._update_variable_constraint(
+                getattr(pattern, position), merged_constraints
+            )
+            for position in pattern_class._positions
+        }
+        return pattern_class(**values)
 
     def _update_variable_constraint(self, field: Any, merged_constraints: dict[str, Q]):
-        """Update a single field (subject or object) with merged constraints."""
+        """Update a single position with merged constraints."""
         if isinstance(field, Var) and field.name in merged_constraints:
             # Create new Var with merged constraint
             return Var(field.name, where=merged_constraints[field.name])
         return field
 
     def _extract_variables(self, fact_pattern: Fact) -> list[Var]:
-        """Extract all Var instances from a fact pattern."""
+        """Extract all Var instances from a fact pattern (over all positions)."""
         variables = []
-
-        if isinstance(fact_pattern.subject, Var):
-            variables.append(fact_pattern.subject)
-        if isinstance(fact_pattern.object, Var):
-            variables.append(fact_pattern.object)
-
+        for position in type(fact_pattern)._positions:
+            value = getattr(fact_pattern, position)
+            if isinstance(value, Var):
+                variables.append(value)
         return variables
 
 
@@ -113,7 +112,7 @@ _constraint_propagator = ConstraintPropagator()
 def optimize_query(fact_patterns: list[Fact]) -> list[Fact]:
     """
     Optimize query by propagating constraints across same-named variables.
-    
+
     Args:
         fact_patterns: List of fact patterns to optimize
 

@@ -4,11 +4,21 @@ Fact system for djdatalog - handles fact definitions, storage, and retrieval.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from typing import Any, ClassVar, dataclass_transform
 
 from asgiref.sync import sync_to_async
 from django.db import models
+
+
+def _key(value: Any) -> Any:
+    """Comparison/hash key for a position value: a model's pk, or the value itself."""
+    return getattr(value, "pk", value)
+
+
+def _column_of(fact_type: type, position: str) -> str:
+    """DB column backing a fact position (default: the position's own name)."""
+    return fact_type._columns.get(position, position)
 
 
 class FactConjunction(tuple):
@@ -107,54 +117,46 @@ class FactConjunction(tuple):
 class Fact:
     """Base class for all datalog facts.
 
-    Decorated with ``@dataclass_transform`` so type checkers treat every
-    subclass as a dataclass and synthesize an ``__init__`` from its annotated
-    ``subject``/``object`` slots -- even though the actual ``@dataclass`` is
-    applied dynamically in ``__init_subclass__``. That is what lets a typed
-    ``Var[Employee]`` be checked against a ``subject: Term[Employee]`` slot.
+    A fact is an N-ary relation: its *positions* are its annotated fields, in
+    order. Binary facts declare ``subject``/``object``; an N-ary fact declares
+    whatever it needs, e.g. ``user``/``rank``/``vessel``. A position may hold an
+    entity (a Django model / FK) or an arbitrary value (a string, a choice, …).
+
+    Decorated with ``@dataclass_transform`` so type checkers synthesize an
+    ``__init__`` from each subclass's annotated fields, even though ``@dataclass``
+    is applied dynamically in ``__init_subclass__``.
     """
 
-    subject: Any
-    object: Any
     # Storage binding. Bind a fact to an explicit Django model with @store(Fact);
-    # a fact with no binding (_django_model is None) is *inferred* — it has no
-    # storage and is derived by rules. _subject_col/_object_col map the fact's
-    # positions onto the bound model's columns; _source_where optionally restricts
-    # which rows are facts; _readonly forbids store/retract.
+    # a fact with no binding (_django_model is None) is *inferred* — no storage,
+    # derived by rules. _columns maps each position (field) onto the bound model's
+    # column (default: same name); _source_where optionally restricts which rows
+    # are facts; _readonly forbids store/retract.
     _django_model: ClassVar[type[models.Model] | None] = None
-    _subject_col: ClassVar[str] = "subject"
-    _object_col: ClassVar[str] = "object"
+    _columns: ClassVar[dict[str, str]] = {}
     _source_where: ClassVar[Any] = None
     _readonly: ClassVar[bool] = False
+    _positions: ClassVar[tuple[str, ...]] = ()  # ordered field names (the relation's positions)
 
     def __init_subclass__(cls, **kwargs):
-        """Apply the dataclass decorator. Storage is bound separately by @store.
+        """Apply the dataclass decorator and record the relation's positions.
 
         A fact bound with ``@store(<Fact>)`` is stored; an unbound fact is
         inferred (derived by rules, no storage). No model is generated.
         """
         super().__init_subclass__(**kwargs)
         cls = dataclass(unsafe_hash=True)(cls)
+        cls._positions = tuple(f.name for f in fields(cls))
 
     def __hash__(self):
-        """Make facts hashable for use in sets."""
-        # Use PKs for Django models, actual values for other types
-        subject_key = getattr(self.subject, "pk", self.subject)
-        object_key = getattr(self.object, "pk", self.object)
-        return hash((type(self), subject_key, object_key))
+        """Hashable over all positions (pk for models, the value otherwise)."""
+        return hash((type(self), *(_key(getattr(self, p)) for p in self._positions)))
 
     def __eq__(self, other):
-        """Compare facts for equality."""
-        if not isinstance(other, type(self)):
+        """Equal iff same type and every position matches (by pk / value)."""
+        if type(self) is not type(other):
             return False
-
-        # Use PKs for Django models, actual values for other types
-        subject_key = getattr(self.subject, "pk", self.subject)
-        other_subject_key = getattr(other.subject, "pk", other.subject)
-        object_key = getattr(self.object, "pk", self.object)
-        other_object_key = getattr(other.object, "pk", other.object)
-
-        return subject_key == other_subject_key and object_key == other_object_key
+        return all(_key(getattr(self, p)) == _key(getattr(other, p)) for p in self._positions)
 
     def __or__(
         self, other: Fact | list[Fact | FactConjunction] | FactConjunction
@@ -217,7 +219,7 @@ class Fact:
                 raise TypeError("Cannot use & operator between unsupported type and Fact.")
 
 
-def store(fact_cls, *, subject="subject", object="object", where=None, readonly=False):
+def store(fact_cls, *, columns=None, where=None, readonly=False, **column_kwargs):
     """Bind a stored ``Fact`` to the explicit Django model that holds its rows.
 
     Decorate the storage model with the fact it stores::
@@ -230,15 +232,18 @@ def store(fact_cls, *, subject="subject", object="object", where=None, readonly=
             class Meta:
                 constraints = [models.UniqueConstraint(fields=["subject", "object"], name="…")]
 
-    ``subject``/``object`` map the fact's positions onto the model's columns
-    (default ``"subject"``/``"object"``). ``where`` is an optional ``Q`` limiting
-    which rows count as facts. ``readonly=True`` forbids ``store_facts`` /
-    ``retract_facts`` — use it when the fact maps onto a table owned elsewhere.
+    Each fact position (its annotated fields) maps onto a model column of the
+    same name by default. To map onto an existing table whose columns differ,
+    pass ``columns={"subject": "employee", "object": "company"}`` (or the same
+    as keyword arguments: ``subject="employee"``). ``where`` is an optional ``Q``
+    limiting which rows count as facts. ``readonly=True`` forbids ``store_facts``
+    / ``retract_facts`` — use it when the fact maps onto a table owned elsewhere.
     """
+    mapping = {**(columns or {}), **column_kwargs}
+
     def bind(model_cls):
         fact_cls._django_model = model_cls
-        fact_cls._subject_col = subject
-        fact_cls._object_col = object
+        fact_cls._columns = mapping
         fact_cls._source_where = where
         fact_cls._readonly = readonly
         return model_cls
@@ -249,6 +254,16 @@ def store(fact_cls, *, subject="subject", object="object", where=None, readonly=
 def _col_value(column: str, value: Any) -> Any:
     """Value to write/filter for a mapped column: a pk for FK attnames, else the value."""
     return getattr(value, "pk", value) if column.endswith("_id") else value
+
+
+def _row_kwargs(fact: Fact) -> dict[str, Any]:
+    """Map a fact's positions onto its bound model's columns for write/filter."""
+    fact_type = type(fact)
+    kwargs = {}
+    for position in fact_type._positions:
+        column = _column_of(fact_type, position)
+        kwargs[column] = _col_value(column, getattr(fact, position))
+    return kwargs
 
 
 def _require_writable_storage(fact_type: type) -> None:
@@ -285,14 +300,7 @@ def store_facts(*facts: Fact) -> None:
     for fact_type, fact_list in facts_by_type.items():
         _require_writable_storage(fact_type)
         django_model = fact_type._django_model
-        subject_col, object_col = fact_type._subject_col, fact_type._object_col
-        model_instances = [
-            django_model(**{
-                subject_col: _col_value(subject_col, fact.subject),
-                object_col: _col_value(object_col, fact.object),
-            })
-            for fact in fact_list
-        ]
+        model_instances = [django_model(**_row_kwargs(fact)) for fact in fact_list]
         django_model.objects.bulk_create(model_instances, ignore_conflicts=True)
 
 
@@ -318,12 +326,8 @@ def retract_facts(*facts: Fact) -> None:
     for fact_type, fact_list in facts_by_type.items():
         _require_writable_storage(fact_type)
         django_model = fact_type._django_model
-        subject_col, object_col = fact_type._subject_col, fact_type._object_col
         for fact in fact_list:
-            django_model.objects.filter(**{
-                subject_col: _col_value(subject_col, fact.subject),
-                object_col: _col_value(object_col, fact.object),
-            }).delete()
+            django_model.objects.filter(**_row_kwargs(fact)).delete()
 
 
 async def astore_facts(*facts: Fact) -> None:
