@@ -310,34 +310,40 @@ def _iter_inferred_lazy(
 
 
 def _load_stored_facts_for_pattern(pattern: Fact) -> list[Fact]:
-    """Load stored facts from database that match a specific fact pattern."""
+    """Load stored facts from the bound model that match a specific fact pattern."""
     try:
         fact_class = type(pattern)
 
-        # Skip loading for inferred facts - they have no storage
-        if fact_class._is_inferred:
+        # Inferred (unbound) facts have no storage to load from.
+        if fact_class._django_model is None:
             return []
 
         django_model = fact_class._django_model
+        subject_col, object_col = fact_class._subject_col, fact_class._object_col
 
-        # Convert fact pattern to Django query
         query_params, q_objects = _fact_to_django_query(pattern)
-
-        # Build the queryset with both filter params and Q objects
-        queryset = django_model.objects.select_related("subject", "object").filter(**query_params)
+        queryset = django_model.objects.all()
+        # A fact mapped onto an existing table may restrict which rows are facts.
+        if fact_class._source_where is not None:
+            queryset = queryset.filter(fact_class._source_where)
+        queryset = queryset.filter(**query_params)
         for q_obj in q_objects:
             queryset = queryset.filter(q_obj)
 
-        # Convert Django instances back to facts
-        facts = []
-        for instance in queryset:
-            fact = fact_class(subject=instance.subject, object=instance.object)
-            facts.append(fact)
+        if subject_col == "subject" and object_col == "object":
+            # Dedicated storage: subject/object are FK fields -> load instances.
+            queryset = queryset.select_related("subject", "object")
+            return [fact_class(subject=i.subject, object=i.object) for i in queryset]
 
-        return facts
+        # Mapped columns: read the mapped values as pks; facts unify by pk and
+        # hydration resolves them from the position model types later.
+        return [
+            fact_class(subject=row[subject_col], object=row[object_col])
+            for row in queryset.values(subject_col, object_col)
+        ]
 
     except (AttributeError, Exception):
-        # If fact doesn't have a Django model or query fails, return empty
+        # If the fact has no bound model or the query fails, return empty.
         return []
 
 
@@ -511,8 +517,8 @@ def _build_targeted_fact_base_for_rules(
         # extension once and memoize it by type.
         for condition in rule.body:
             condition_type = type(condition)
-            if not getattr(condition_type, "_is_inferred", False):
-                continue
+            if condition_type._django_model is not None:
+                continue  # stored condition - handled below, not derived
             if condition_type in resolving:
                 continue  # recursive reference - grown by the fixpoint
             sub_condition = _apply_head_sub_to_condition(condition, head_sub)
@@ -525,8 +531,8 @@ def _build_targeted_fact_base_for_rules(
                     )
                 targeted_facts.extend(_memo[condition_type])
 
-        # 2) Stored conditions.
-        stored = [c for c in rule.body if not getattr(type(c), "_is_inferred", False)]
+        # 2) Stored conditions (those bound to a model).
+        stored = [c for c in rule.body if type(c)._django_model is not None]
         if pushdown:
             env: dict[str, set] = {}
             remaining = stored[:]
@@ -678,8 +684,8 @@ def _unify_fact_pattern(pattern: Fact, concrete_fact: Fact, existing_bindings: d
             if hasattr(concrete_fact.subject, "pk")
             else concrete_fact.subject
         )
-    elif pattern.subject != concrete_fact.subject:
-        return None  # Subjects don't match
+    elif _binding_key(pattern.subject) != _binding_key(concrete_fact.subject):
+        return None  # Subjects don't match (compare by pk)
 
     # Check object
     if isinstance(pattern.object, Var):
@@ -705,8 +711,8 @@ def _unify_fact_pattern(pattern: Fact, concrete_fact: Fact, existing_bindings: d
         if var_name in substitution and substitution[var_name] != obj_value:
             return None
         substitution[var_name] = obj_value
-    elif pattern.object != concrete_fact.object:
-        return None  # Objects don't match
+    elif _binding_key(pattern.object) != _binding_key(concrete_fact.object):
+        return None  # Objects don't match (compare by pk)
 
     return substitution
 
@@ -845,8 +851,8 @@ def _query_single_fact(fact_pattern: Fact) -> Iterator[dict[str, Any]]:
     with time_fact_execution(fact_pattern):
         fact_class = type(fact_pattern)
 
-        # Handle inferred facts - they must be computed via rules
-        if fact_class._is_inferred:
+        # Handle inferred (unbound) facts - they must be computed via rules
+        if fact_class._django_model is None:
             # For inferred facts, get all facts (stored + inferred) and query against them
             relevant_facts = _get_facts_for_pattern(fact_pattern)
             yield from _query_against_facts(fact_pattern, relevant_facts)
@@ -876,30 +882,44 @@ def _fact_to_django_query(fact: Fact) -> tuple[dict[str, Any], list[Any]]:
     Returns:
         tuple: (query_params, q_objects) where q_objects are constraints for Vars
     """
+    fact_class = type(fact)
+    # For a fact mapped onto an existing table these are its real columns
+    # (e.g. "employee_id"); for dedicated storage they are "subject"/"object".
+    subject_col = getattr(fact_class, "_subject_col", "subject")
+    object_col = getattr(fact_class, "_object_col", "object")
+
     query_params = {}
     q_objects = []
 
-    if not isinstance(fact.subject, Var):
-        # Use Django model instance directly for ForeignKey lookup
-        query_params["subject"] = fact.subject
-    elif fact.subject.where is not None:
-        # Skip constraints with variable references - they need special handling
-        if not has_variable_references(fact.subject.where):
-            # Add Q object constraint with subject__ prefix
-            prefixed_q = _prefix_q_object(fact.subject.where, "subject")
-            q_objects.append(prefixed_q)
-
-    if not isinstance(fact.object, Var):
-        # Use Django model instance directly for ForeignKey lookup
-        query_params["object"] = fact.object
-    elif fact.object.where is not None:
-        # Skip constraints with variable references - they need special handling
-        if not has_variable_references(fact.object.where):
-            # Add Q object constraint with object__ prefix
-            prefixed_q = _prefix_q_object(fact.object.where, "object")
-            q_objects.append(prefixed_q)
+    for position, column in ((fact.subject, subject_col), (fact.object, object_col)):
+        if not isinstance(position, Var):
+            # Concrete position filters on the column; a mapped FK attname
+            # (…_id) takes the pk, a plain FK field takes the instance.
+            query_params[column] = _col_filter_value(column, position)
+        elif position.where is not None and not has_variable_references(position.where):
+            # Prefix the Var's constraint onto the relation behind the column.
+            q_objects.append(_prefix_q_object(position.where, _relation_prefix(column)))
 
     return query_params, q_objects
+
+
+def _col_filter_value(column: str, value: Any) -> Any:
+    """Value to filter a concrete position by.
+
+    Dedicated storage keeps the FK field (``subject``/``object``) → filter by the
+    instance (unchanged behavior). A column-mapped fact filters a raw pk column
+    (``id``/``employee_id``) → filter by the pk.
+    """
+    return value if column in ("subject", "object") else getattr(value, "pk", value)
+
+
+def _relation_prefix(column: str) -> str:
+    """Relation name for prefixing a Var's ``where`` onto a column.
+
+    A mapped FK attname like ``employee_id`` reaches the related model through
+    ``employee__…``, so strip a trailing ``_id``; other columns are used as is.
+    """
+    return column[:-3] if column.endswith("_id") else column
 
 
 def _prefix_q_object(q_obj, prefix: str):
@@ -965,11 +985,15 @@ def _try_automatic_orm_conversion(conditions: list[Fact]) -> Iterator[dict[str, 
     Falls back to original approach only when analysis fails completely.
     """
     
-    # Only handle stored facts
+    # Only handle stored facts (bound to a model).
     for condition in conditions:
         fact_class = type(condition)
-        if not hasattr(fact_class, '_django_model') or getattr(fact_class, 'inferred', False):
+        if fact_class._django_model is None:
             raise NotImplementedError("ORM conversion only supports stored facts")
+        # The advanced analyzer assumes literal subject/object fields; a fact
+        # mapped onto other columns goes through the column-aware loader instead.
+        if fact_class._subject_col != "subject" or fact_class._object_col != "object":
+            raise NotImplementedError("ORM conversion not supported for column-mapped facts")
         # The advanced analyzer models variable positions only; it does not
         # apply a concrete (non-Var) subject/object as a filter. Defer such
         # patterns to the fallback loader, which filters concrete values

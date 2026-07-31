@@ -4,11 +4,9 @@ Fact system for djdatalog - handles fact definitions, storage, and retrieval.
 
 from __future__ import annotations
 
-import enum
 from dataclasses import dataclass
-from typing import Any, ClassVar, assert_never, dataclass_transform, get_type_hints
+from typing import Any, ClassVar, dataclass_transform
 
-import uuid6
 from asgiref.sync import sync_to_async
 from django.db import models
 
@@ -104,35 +102,6 @@ class FactConjunction(tuple):
                 )
 
 
-class Unique(enum.Enum):
-    """Storage uniqueness constraint for a stored fact.
-
-    - ``TOGETHER`` (default): the ``(subject, object)`` pair is unique — a plain
-      edge with no duplicate pairs.
-    - ``SUBJECT`` / ``OBJECT``: that single position is unique, i.e. each
-      subject/object appears at most once (e.g. ``OBJECT`` = a single owner per
-      owned thing).
-    """
-
-    TOGETHER = "together"
-    SUBJECT = "subject"
-    OBJECT = "object"
-
-
-class FactModel(models.Model):
-    """Abstract base model for storing datalog facts.
-
-    The uniqueness constraint is set per-fact on the *concrete* model (see
-    ``Fact._create_django_model``), driven by ``unique=``, so it is not declared
-    here.
-    """
-
-    id = models.UUIDField(primary_key=True, default=uuid6.uuid7, editable=False)
-
-    class Meta:
-        abstract = True
-
-
 @dataclass_transform(eq_default=False)
 @dataclass(eq=False)  # Disable auto-generated __eq__
 class Fact:
@@ -147,111 +116,25 @@ class Fact:
 
     subject: Any
     object: Any
-    _django_model: ClassVar[type[models.Model] | None]
-    _is_inferred: ClassVar[bool] = False
-    # Which position is unique in storage (see :class:`Unique`).
-    _unique: ClassVar[Unique] = Unique.TOGETHER
+    # Storage binding. Bind a fact to an explicit Django model with @store(Fact);
+    # a fact with no binding (_django_model is None) is *inferred* — it has no
+    # storage and is derived by rules. _subject_col/_object_col map the fact's
+    # positions onto the bound model's columns; _source_where optionally restricts
+    # which rows are facts; _readonly forbids store/retract.
+    _django_model: ClassVar[type[models.Model] | None] = None
+    _subject_col: ClassVar[str] = "subject"
+    _object_col: ClassVar[str] = "object"
+    _source_where: ClassVar[Any] = None
+    _readonly: ClassVar[bool] = False
 
-    def __init_subclass__(cls, inferred=False, unique: Unique = Unique.TOGETHER, **kwargs):
-        """Generate the storage model and apply the dataclass decorator.
+    def __init_subclass__(cls, **kwargs):
+        """Apply the dataclass decorator. Storage is bound separately by @store.
 
-        ``unique`` (a :class:`Unique`) controls the storage uniqueness constraint.
+        A fact bound with ``@store(<Fact>)`` is stored; an unbound fact is
+        inferred (derived by rules, no storage). No model is generated.
         """
         super().__init_subclass__(**kwargs)
-
-        # Apply dataclass decorator with unsafe_hash=True to the subclass
         cls = dataclass(unsafe_hash=True)(cls)
-
-        cls._is_inferred = inferred
-        cls._unique = unique
-
-        # Only create Django model if not inferred
-        if inferred:
-            cls._django_model = None
-        else:
-            cls._django_model = cls._create_django_model()
-
-    @classmethod
-    def _create_django_model(cls):
-        """Dynamically create a Django model for this fact type."""
-        import sys
-
-        # Generate model name
-        model_name = f"{cls.__name__}Storage"
-
-        # Get type annotations from the class
-        try:
-            type_hints = get_type_hints(cls)
-        except (NameError, AttributeError):
-            # Fallback to raw annotations if get_type_hints fails
-            type_hints = getattr(cls, "__annotations__", {})
-
-        if "subject" not in type_hints or "object" not in type_hints:
-            raise ValueError(f"Fact {cls.__name__} must have subject and object type annotations")
-
-        # Extract Django model types from Union annotations
-        subject_model = cls._extract_django_model_from_annotation(type_hints["subject"])
-        object_model = cls._extract_django_model_from_annotation(type_hints["object"])
-
-        if not subject_model or not object_model:
-            raise ValueError(
-                f"Could not extract Django model types from {cls.__name__} annotations"
-            )
-
-        # The uniqueness constraint lives on the concrete model. A single-term
-        # Unique constrains that one position (each subject/object appears once);
-        # TOGETHER keeps the pair unique (a plain edge, no duplicate pairs). We
-        # use a Meta UniqueConstraint rather than a unique=True ForeignKey so
-        # Django does not raise W342 ("use OneToOneField") for the single-term
-        # case — the DB constraint is the same, the field stays a ForeignKey.
-        meta_attrs: dict[str, Any] = {"__module__": cls.__module__}
-        match cls._unique:
-            case Unique.TOGETHER:
-                meta_attrs["unique_together"] = (("subject", "object"),)
-            case Unique.SUBJECT | Unique.OBJECT:
-                column = cls._unique.value  # "subject" | "object"
-                meta_attrs["constraints"] = [
-                    models.UniqueConstraint(
-                        fields=[column], name=f"uniq_{model_name.lower()}_{column}"[:63]
-                    )
-                ]
-            case unreachable:
-                assert_never(unreachable)
-
-        model_fields = {
-            "subject": models.ForeignKey(subject_model, on_delete=models.CASCADE, related_name="+"),
-            "object": models.ForeignKey(object_model, on_delete=models.CASCADE, related_name="+"),
-            "__module__": cls.__module__,
-            "Meta": type("Meta", (), meta_attrs),
-        }
-
-        # Create the Django model class
-        django_model = type(model_name, (FactModel,), model_fields)
-
-        # Inject the model into the fact's module so Django can find it
-        fact_module = sys.modules[cls.__module__]
-        setattr(fact_module, model_name, django_model)
-
-        return django_model
-
-    @classmethod
-    def _extract_django_model_from_annotation(cls, type_annotation):
-        """Extract the Django model type from a fact-slot annotation.
-
-        Handles ``User | Var``, the typed ``Employee | Var[Employee]``, the
-        ``Term[Employee]`` alias, and multi-model slots like
-        ``Term[Department] | Term[Project]`` by recursing through unions and
-        generic/alias ``__args__`` until a concrete Django model is found.
-        """
-        # Direct Django model reference
-        if hasattr(type_annotation, "_meta") and hasattr(type_annotation._meta, "app_label"):
-            return type_annotation
-        # Unwrap unions, generic aliases (Var[X]) and Term aliases by scanning args
-        for arg_type in getattr(type_annotation, "__args__", ()):
-            found = cls._extract_django_model_from_annotation(arg_type)
-            if found is not None:
-                return found
-        return None
 
     def __hash__(self):
         """Make facts hashable for use in sets."""
@@ -334,20 +217,58 @@ class Fact:
                 raise TypeError("Cannot use & operator between unsupported type and Fact.")
 
 
+def store(fact_cls, *, subject="subject", object="object", where=None, readonly=False):
+    """Bind a stored ``Fact`` to the explicit Django model that holds its rows.
+
+    Decorate the storage model with the fact it stores::
+
+        @store(WorksFor)
+        class WorksForStorage(models.Model):
+            subject = models.ForeignKey(Employee, on_delete=models.CASCADE, related_name="+")
+            object = models.ForeignKey(Company, on_delete=models.CASCADE, related_name="+")
+
+            class Meta:
+                constraints = [models.UniqueConstraint(fields=["subject", "object"], name="…")]
+
+    ``subject``/``object`` map the fact's positions onto the model's columns
+    (default ``"subject"``/``"object"``). ``where`` is an optional ``Q`` limiting
+    which rows count as facts. ``readonly=True`` forbids ``store_facts`` /
+    ``retract_facts`` — use it when the fact maps onto a table owned elsewhere.
+    """
+    def bind(model_cls):
+        fact_cls._django_model = model_cls
+        fact_cls._subject_col = subject
+        fact_cls._object_col = object
+        fact_cls._source_where = where
+        fact_cls._readonly = readonly
+        return model_cls
+
+    return bind
+
+
+def _col_value(column: str, value: Any) -> Any:
+    """Value to write/filter for a mapped column: a pk for FK attnames, else the value."""
+    return getattr(value, "pk", value) if column.endswith("_id") else value
+
+
+def _require_writable_storage(fact_type: type) -> None:
+    if fact_type._django_model is None:
+        raise ValueError(
+            f"{fact_type.__name__} has no storage; bind a model with @store({fact_type.__name__})."
+        )
+    if fact_type._readonly:
+        raise ValueError(
+            f"Cannot write {fact_type.__name__}: it is read-only "
+            f"(its rows live in {fact_type._django_model.__name__})."
+        )
+
+
 def store_facts(*facts: Fact) -> None:
     """Store facts in the database."""
     if not facts:
         return
 
-    # Filter out inferred facts - they cannot be stored
-    storable_facts = []
-    for fact in facts:
-        if type(fact)._is_inferred:
-            raise ValueError(
-                f"Cannot store inferred fact: {fact}. "
-                f"Inferred facts are computed automatically from rules."
-            )
-        storable_facts.append(fact)
+    storable_facts = list(facts)  # unbound (inferred) facts are caught per-type below
 
     if not storable_facts:
         return
@@ -360,16 +281,18 @@ def store_facts(*facts: Fact) -> None:
             facts_by_type[fact_type] = []
         facts_by_type[fact_type].append(fact)
 
-    # Bulk create for each fact type
+    # Bulk create for each fact type, writing through the bound model's columns.
     for fact_type, fact_list in facts_by_type.items():
+        _require_writable_storage(fact_type)
         django_model = fact_type._django_model
-        model_instances = []
-
-        for fact in fact_list:
-            # Store Django model instances directly in ForeignKey fields
-            model_instances.append(django_model(subject=fact.subject, object=fact.object))
-
-        # Use ignore_conflicts to handle duplicates
+        subject_col, object_col = fact_type._subject_col, fact_type._object_col
+        model_instances = [
+            django_model(**{
+                subject_col: _col_value(subject_col, fact.subject),
+                object_col: _col_value(object_col, fact.object),
+            })
+            for fact in fact_list
+        ]
         django_model.objects.bulk_create(model_instances, ignore_conflicts=True)
 
 
@@ -378,15 +301,7 @@ def retract_facts(*facts: Fact) -> None:
     if not facts:
         return
 
-    # Filter out inferred facts - they cannot be retracted
-    retractable_facts = []
-    for fact in facts:
-        if type(fact)._is_inferred:
-            raise ValueError(
-                f"Cannot retract inferred fact: {fact}. "
-                f"Inferred facts are computed automatically from rules."
-            )
-        retractable_facts.append(fact)
+    retractable_facts = list(facts)  # unbound (inferred) facts are caught per-type below
 
     if not retractable_facts:
         return
@@ -399,13 +314,16 @@ def retract_facts(*facts: Fact) -> None:
             facts_by_type[fact_type] = []
         facts_by_type[fact_type].append(fact)
 
-    # Batch delete for each fact type
+    # Batch delete for each fact type, matching through the bound model's columns.
     for fact_type, fact_list in facts_by_type.items():
+        _require_writable_storage(fact_type)
         django_model = fact_type._django_model
-
+        subject_col, object_col = fact_type._subject_col, fact_type._object_col
         for fact in fact_list:
-            # Delete using Django model instances directly
-            django_model.objects.filter(subject=fact.subject, object=fact.object).delete()
+            django_model.objects.filter(**{
+                subject_col: _col_value(subject_col, fact.subject),
+                object_col: _col_value(object_col, fact.object),
+            }).delete()
 
 
 async def astore_facts(*facts: Fact) -> None:

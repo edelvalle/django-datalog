@@ -34,14 +34,14 @@ def rule(head: Fact, body: Fact | list[Fact | FactConjunction] | FactConjunction
     Define inference rules with automatic constraint propagation and support for | and & operators.
 
     Args:
-        head: The fact that can be inferred (must be marked with inferred=True)
+        head: The inferred fact to derive (an unbound fact, i.e. no @store).
         body: The rule body. Can be:
               - A single Fact (one condition)
               - A tuple[Fact, ...] (conjunctive conditions - AND)
               - A list[Fact | tuple[Fact, ...]] (disjunctive alternatives - OR)
 
     Raises:
-        TypeError: If the head fact is not marked with inferred=True
+        TypeError: If the head fact is stored (bound with @store).
 
     Examples:
         # Single fact condition
@@ -77,11 +77,11 @@ def rule(head: Fact, body: Fact | list[Fact | FactConjunction] | FactConjunction
             MemberOf(Var("user"), Var("company")) & Owns(Var("company"), Var("resource"))
         )
     """
-    # Verify that the head fact is marked as inferred=True
-    if not getattr(type(head), "_is_inferred", False):
+    # A rule head must be inferred - i.e. not bound to storage with @store.
+    if getattr(type(head), "_django_model", None) is not None:
         raise TypeError(
-            f"Rule head fact {type(head).__name__} must be marked with inferred=True. "
-            f"Only inferred facts can be the head of inference rules."
+            f"Rule head {type(head).__name__} is a stored fact (it has @store). "
+            f"Only inferred facts (no @store) can be the head of an inference rule."
         )
     match body:
         case Fact():
@@ -227,7 +227,8 @@ def _iter_all_bindings_multi(conditions: list[Any], sources: list[list[Fact]]):
 
     result = _find_bindings_for_condition(conditions[0], sources[0])
     for i in range(1, len(conditions)):
-        result = _iter_join_bindings(result, _find_bindings_for_condition(conditions[i], sources[i]))
+        right = _find_bindings_for_condition(conditions[i], sources[i])
+        result = _iter_join_bindings(result, right)
     yield from result
 
 
@@ -287,20 +288,25 @@ def _unify_facts(pattern_fact: Fact, concrete_fact: Fact) -> dict[str, Any] | No
     """Unify a pattern fact (with variables) against a concrete fact."""
     bindings = {}
 
+    # Compare concrete positions by pk so a model-instance pattern matches a
+    # fact that carries a pk (a fact mapped onto an existing table), and vice
+    # versa. For dedicated storage (both instances) this is equivalent.
     # Check subject
     if isinstance(pattern_fact.subject, Var):
         bindings[pattern_fact.subject.name] = concrete_fact.subject
-    elif pattern_fact.subject != concrete_fact.subject:
+    elif _binding_key(pattern_fact.subject) != _binding_key(concrete_fact.subject):
         return None  # Subjects don't match
 
     # Check object
     if isinstance(pattern_fact.object, Var):
         var_name = pattern_fact.object.name
         # Check for conflicting bindings
-        if var_name in bindings and bindings[var_name] != concrete_fact.object:
+        if var_name in bindings and _binding_key(bindings[var_name]) != _binding_key(
+            concrete_fact.object
+        ):
             return None
         bindings[var_name] = concrete_fact.object
-    elif pattern_fact.object != concrete_fact.object:
+    elif _binding_key(pattern_fact.object) != _binding_key(concrete_fact.object):
         return None  # Objects don't match
 
     return bindings
