@@ -26,7 +26,7 @@ from django_datalog.models import Fact, Term, Var, query, rule, rule_context, st
 from .models import Company, Person, PersonWorksFor
 
 
-class Colleague(Fact, inferred=True):
+class Colleague(Fact):
     subject: Term[Person]
     object: Term[Person]
 

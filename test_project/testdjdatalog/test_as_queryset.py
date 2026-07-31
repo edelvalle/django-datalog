@@ -18,12 +18,12 @@ from django_datalog.models import (
 from .models import Company, Person, PersonWorksFor
 
 
-class Reaches(Fact, inferred=True):  # inferred: person reaches a company via PersonWorksFor
+class Reaches(Fact):  # inferred: person reaches a company via PersonWorksFor
     subject: Term[Person]
     object: Term[Company]
 
 
-class ReachedBy(Fact, inferred=True):
+class ReachedBy(Fact):
     subject: Term[Company]
     object: Term[Person]
 

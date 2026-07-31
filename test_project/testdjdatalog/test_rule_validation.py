@@ -12,8 +12,8 @@ from testdjdatalog.models import ParentOf, Person
 
 
 @dataclass
-class TestInferredFact(Fact, inferred=True):
-    """A fact that is marked as inferred (should work as rule head)."""
+class TestInferredFact(Fact):
+    """An inferred (unbound) fact — valid as a rule head."""
 
     subject: Term[Person]
     object: Term[Person]
@@ -43,5 +43,5 @@ class RuleValidationTests(TestCase):
             )
 
         # Check that the error message is correct
-        self.assertIn("must be marked with inferred=True", str(context.exception))
+        self.assertIn("stored fact", str(context.exception))
         self.assertIn("ParentOf", str(context.exception))

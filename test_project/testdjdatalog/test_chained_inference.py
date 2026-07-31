@@ -21,22 +21,22 @@ from .models import Company, ParentOf, Person, PersonWorksFor
 
 
 # Inferred facts used to build multi-level chains (no DB storage).
-class NetColleague(Fact, inferred=True):  # level 1: body references stored facts
+class NetColleague(Fact):  # level 1: body references stored facts
     subject: Term[Person]
     object: Term[Person]
 
 
-class InSameNetwork(Fact, inferred=True):  # level 2: body references NetColleague
+class InSameNetwork(Fact):  # level 2: body references NetColleague
     subject: Term[Person]
     object: Term[Person]
 
 
-class NetworkL3(Fact, inferred=True):  # level 3: body references InSameNetwork
+class NetworkL3(Fact):  # level 3: body references InSameNetwork
     subject: Term[Person]
     object: Term[Person]
 
 
-class Ancestor(Fact, inferred=True):  # recursive: references itself
+class Ancestor(Fact):  # recursive: references itself
     subject: Term[Person]
     object: Term[Person]
 

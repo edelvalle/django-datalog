@@ -11,7 +11,7 @@ from testdjdatalog.models import Person
 
 
 @dataclass
-class IsOwner(Fact, inferred=True):
+class IsOwner(Fact):
     """Owner relationship for operator tests."""
 
     subject: Term[Person]
@@ -19,7 +19,7 @@ class IsOwner(Fact, inferred=True):
 
 
 @dataclass
-class IsAdmin(Fact, inferred=True):
+class IsAdmin(Fact):
     """Admin relationship for operator tests."""
 
     subject: Term[Person]
@@ -27,7 +27,7 @@ class IsAdmin(Fact, inferred=True):
 
 
 @dataclass
-class MemberOf(Fact, inferred=True):
+class MemberOf(Fact):
     """Team membership for operator tests."""
 
     subject: Term[Person]
@@ -35,7 +35,7 @@ class MemberOf(Fact, inferred=True):
 
 
 @dataclass
-class TeamOwns(Fact, inferred=True):
+class TeamOwns(Fact):
     """Team ownership for operator tests."""
 
     subject: Term[Person]  # Team
@@ -43,7 +43,7 @@ class TeamOwns(Fact, inferred=True):
 
 
 @dataclass
-class HasAccess(Fact, inferred=True):
+class HasAccess(Fact):
     """User has access to a resource (inferred fact for operator tests)."""
 
     subject: Term[Person]

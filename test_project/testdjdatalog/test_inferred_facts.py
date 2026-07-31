@@ -11,7 +11,7 @@ from testdjdatalog.models import Person, PersonWorksFor
 
 
 @dataclass
-class HasDirectAccess(Fact, inferred=True):
+class HasDirectAccess(Fact):
     """Person has direct access to a company (inferred-only fact)."""
 
     subject: Term[Person]
@@ -27,21 +27,17 @@ class InferredFactsTests(TestCase):
         self.bob = Person.objects.create(name="Bob")
         self.charlie = Person.objects.create(name="Charlie")
 
-    def test_inferred_fact_no_django_model(self):
-        """Test that inferred facts don't get Django models."""
-        self.assertTrue(HasDirectAccess._is_inferred)
+    def test_inferred_fact_has_no_storage(self):
+        """An inferred (unbound) fact has no storage model; a stored one does."""
         self.assertIsNone(HasDirectAccess._django_model)
-
-        self.assertFalse(PersonWorksFor._is_inferred)
         self.assertIsNotNone(PersonWorksFor._django_model)
 
     def test_cannot_store_inferred_facts(self):
-        """Test that inferred facts cannot be stored."""
+        """An unbound (inferred) fact cannot be stored."""
         with self.assertRaises(ValueError) as cm:
             store_facts(HasDirectAccess(subject=self.alice, object=self.bob))
 
-        self.assertIn("Cannot store inferred fact", str(cm.exception))
-        self.assertIn("computed automatically from rules", str(cm.exception))
+        self.assertIn("has no storage", str(cm.exception))
 
     def test_inferred_facts_computed_via_rules(self):
         """Test that inferred facts are computed via inference rules."""

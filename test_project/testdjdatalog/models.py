@@ -5,10 +5,11 @@ These models will be used to create facts and test datalog inference.
 
 from decimal import Decimal
 
+import uuid6
 from django.contrib.auth.models import User
 from django.db import models
 
-from django_datalog.models import Fact, Term, Var
+from django_datalog.models import Fact, Term, Var, store
 
 
 # Models originally from django_datalog.models (used by internal tests)
@@ -123,14 +124,14 @@ class MarriedTo(Fact):
     object: Term[Person]  # Spouse 2
 
 
-class GrandparentOf(Fact, inferred=True):
+class GrandparentOf(Fact):
     """Person is grandparent of another person (inferred)."""
 
     subject: Term[Person]  # Grandparent
     object: Term[Person]  # Grandchild
 
 
-class SiblingOf(Fact, inferred=True):
+class SiblingOf(Fact):
     """Person is sibling of another person."""
 
     subject: Term[Person]  # Sibling 1
@@ -172,28 +173,28 @@ class WorksOn(Fact):
     object: Term[Project]  # Project
 
 
-class PersonColleaguesOf(Fact, inferred=True):
+class PersonColleaguesOf(Fact):
     """Two people are colleagues (work at same company) - for internal tests."""
 
     subject: Term[Person]  # Person 1
     object: Term[Person]  # Person 2
 
 
-class ColleaguesOf(Fact, inferred=True):
+class ColleaguesOf(Fact):
     """Two employees are colleagues (work at same company)."""
 
     subject: Term[Employee]  # Employee 1
     object: Term[Employee]  # Employee 2
 
 
-class TeamMates(Fact, inferred=True):
+class TeamMates(Fact):
     """Two employees are teammates (work in same department)."""
 
     subject: Term[Employee]  # Employee 1
     object: Term[Employee]  # Employee 2
 
 
-class ProjectColleagues(Fact, inferred=True):
+class ProjectColleagues(Fact):
     """Two employees are project colleagues (work on same project)."""
 
     subject: Term[Employee]  # Employee 1
@@ -226,3 +227,120 @@ class IsAdmin(Fact):
 
     subject: Term[Person]
     object: Term[Person]
+
+
+# ---------------------------------------------------------------------------
+# Explicit storage models for the stored facts above. Each is bound to its
+# fact with @store; django-datalog reads/writes these tables (no generated
+# models). Inferred facts have no storage.
+# ---------------------------------------------------------------------------
+class FactStorage(models.Model):
+    """Shared base for fact storage tables (uuid7 primary key)."""
+
+    id = models.UUIDField(primary_key=True, default=uuid6.uuid7, editable=False)
+
+    class Meta:
+        abstract = True
+
+
+def _fk(model):
+    return models.ForeignKey(model, on_delete=models.CASCADE, related_name="+")
+
+
+@store(ParentOf)
+class ParentOfStorage(FactStorage):
+    subject = _fk(Person)
+    object = _fk(Person)
+
+    class Meta:
+        unique_together = (("subject", "object"),)
+
+
+@store(MarriedTo)
+class MarriedToStorage(FactStorage):
+    subject = _fk(Person)
+    object = _fk(Person)
+
+    class Meta:
+        unique_together = (("subject", "object"),)
+
+
+@store(PersonWorksFor)
+class PersonWorksForStorage(FactStorage):
+    subject = _fk(Person)
+    object = _fk(Company)
+
+    class Meta:
+        unique_together = (("subject", "object"),)
+
+
+@store(WorksFor)
+class WorksForStorage(FactStorage):
+    subject = _fk(Employee)
+    object = _fk(Company)
+
+    class Meta:
+        unique_together = (("subject", "object"),)
+
+
+@store(MemberOf)
+class MemberOfStorage(FactStorage):
+    subject = _fk(Employee)
+    object = _fk(Department)
+
+    class Meta:
+        unique_together = (("subject", "object"),)
+
+
+@store(ManagerOf)
+class ManagerOfStorage(FactStorage):
+    subject = _fk(Employee)
+    object = _fk(Employee)
+
+    class Meta:
+        unique_together = (("subject", "object"),)
+
+
+@store(WorksOn)
+class WorksOnStorage(FactStorage):
+    subject = _fk(Employee)
+    object = _fk(Project)
+
+    class Meta:
+        unique_together = (("subject", "object"),)
+
+
+@store(CanAccess)
+class CanAccessStorage(FactStorage):
+    subject = _fk(Employee)
+    object = _fk(Project)
+
+    class Meta:
+        unique_together = (("subject", "object"),)
+
+
+@store(HasAuthority)
+class HasAuthorityStorage(FactStorage):
+    subject = _fk(Employee)
+    object = _fk(Department)
+
+    class Meta:
+        unique_together = (("subject", "object"),)
+
+
+@store(IsManager)
+class IsManagerStorage(FactStorage):
+    subject = _fk(Person)
+    object = _fk(Person)
+
+    class Meta:
+        unique_together = (("subject", "object"),)
+
+
+@store(IsAdmin)
+class IsAdminStorage(FactStorage):
+    subject = _fk(Person)
+    object = _fk(Person)
+
+    class Meta:
+        unique_together = (("subject", "object"),)

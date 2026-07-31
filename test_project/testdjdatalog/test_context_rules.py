@@ -19,7 +19,7 @@ from .models import (
 )
 
 
-class TestContextTeammates(Fact, inferred=True):
+class TestContextTeammates(Fact):
     """Test-specific fact that won't conflict with global rules."""
 
     subject: Term[Employee]  # Employee 1

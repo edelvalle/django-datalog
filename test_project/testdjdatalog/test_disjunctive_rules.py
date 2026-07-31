@@ -39,7 +39,7 @@ from testdjdatalog.models import IsAdmin, IsManager, ParentOf, Person
 
 
 @dataclass
-class HasAuthority(Fact, inferred=True):
+class HasAuthority(Fact):
     """Person has authority over another person (inferred-only)."""
 
     subject: Term[Person]
@@ -47,7 +47,7 @@ class HasAuthority(Fact, inferred=True):
 
 
 @dataclass
-class CanEdit(Fact, inferred=True):
+class CanEdit(Fact):
     """Person can edit another person's data (inferred-only)."""
 
     subject: Term[Person]
