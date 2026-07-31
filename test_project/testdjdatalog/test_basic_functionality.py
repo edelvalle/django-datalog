@@ -2,11 +2,19 @@
 Basic functionality tests for django_datalog without database dependencies.
 """
 
+from typing import Any
 from unittest.mock import Mock
 
 from django.test import TestCase
 
-from django_datalog.models import Var, _fact_to_django_query
+from django_datalog.models import Fact, Var, _fact_to_django_query
+
+
+class _PairFact(Fact):
+    """Minimal binary fact used to exercise position-driven query helpers."""
+
+    subject: Any
+    object: Any
 
 
 class BasicFunctionalityTests(TestCase):
@@ -31,10 +39,8 @@ class BasicFunctionalityTests(TestCase):
 
     def test_fact_to_django_query_with_concrete_values(self):
         """Test _fact_to_django_query with concrete values."""
-        # Create a mock fact object
-        mock_fact = Mock()
-        mock_fact.subject = Mock()
-        mock_fact.object = Mock()
+        # Create a fact with concrete (non-Var) positions
+        mock_fact = _PairFact(subject=Mock(), object=Mock())
 
         query_params, q_objects = _fact_to_django_query(mock_fact)
 
@@ -48,10 +54,8 @@ class BasicFunctionalityTests(TestCase):
         subject_var = Var("subject")
         object_var = Var("object")
 
-        # Create a mock fact object
-        mock_fact = Mock()
-        mock_fact.subject = subject_var
-        mock_fact.object = object_var
+        # Create a fact with variable positions
+        mock_fact = _PairFact(subject=subject_var, object=object_var)
 
         query_params, q_objects = _fact_to_django_query(mock_fact)
 
@@ -69,10 +73,8 @@ class BasicFunctionalityTests(TestCase):
         subject_var = Var("subject", where=subject_constraint)
         object_var = Var("object", where=object_constraint)
 
-        # Create a mock fact object
-        mock_fact = Mock()
-        mock_fact.subject = subject_var
-        mock_fact.object = object_var
+        # Create a fact with variable positions
+        mock_fact = _PairFact(subject=subject_var, object=object_var)
 
         query_params, q_objects = _fact_to_django_query(mock_fact)
 
@@ -89,10 +91,8 @@ class BasicFunctionalityTests(TestCase):
         subject = Mock()  # Concrete value
         object_var = Var("object", where=Q(active=True))  # Variable with constraint
 
-        # Create a mock fact object
-        mock_fact = Mock()
-        mock_fact.subject = subject
-        mock_fact.object = object_var
+        # Create a fact mixing a concrete subject and a variable object
+        mock_fact = _PairFact(subject=subject, object=object_var)
 
         query_params, q_objects = _fact_to_django_query(mock_fact)
 

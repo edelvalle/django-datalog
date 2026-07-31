@@ -2,11 +2,19 @@
 Tests for query hydration functionality in django_datalog.
 """
 
+from typing import Any
 from unittest.mock import Mock, patch
 
 from django.test import TestCase
 
-from django_datalog.models import Var, query
+from django_datalog.models import Fact, Var, query
+
+
+class _PairFact(Fact):
+    """Minimal binary fact used to drive the query pipeline in these tests."""
+
+    subject: Any
+    object: Any
 
 
 class QueryHydrationTests(TestCase):
@@ -21,10 +29,8 @@ class QueryHydrationTests(TestCase):
         mock_satisfy.return_value = iter(mock_pk_results)
         mock_hydrate.return_value = iter([{"subject": Mock(), "object": Mock()}])
 
-        # Create test fact mock
-        mock_fact = Mock()
-        mock_fact.subject = Mock()
-        mock_fact.object = Var("vessel")
+        # Create a test fact with a concrete subject and a variable object
+        mock_fact = _PairFact(subject=Mock(), object=Var("vessel"))
 
         # Query with hydration enabled (default)
         list(query(mock_fact, hydrate=True))
@@ -43,10 +49,8 @@ class QueryHydrationTests(TestCase):
         mock_pk_results = [{"subject": 1, "object": 2}]
         mock_satisfy.return_value = iter(mock_pk_results)
 
-        # Create test fact mock
-        mock_fact = Mock()
-        mock_fact.subject = Mock()
-        mock_fact.object = Var("vessel")
+        # Create a test fact with a concrete subject and a variable object
+        mock_fact = _PairFact(subject=Mock(), object=Var("vessel"))
 
         # Query with hydration disabled
         results = list(query(mock_fact, hydrate=False))
@@ -66,10 +70,8 @@ class QueryHydrationTests(TestCase):
         # Setup mocks
         mock_satisfy.return_value = iter([])
 
-        # Create test fact mock
-        mock_fact = Mock()
-        mock_fact.subject = Mock()
-        mock_fact.object = Var("vessel")
+        # Create a test fact with a concrete subject and a variable object
+        mock_fact = _PairFact(subject=Mock(), object=Var("vessel"))
 
         # Query without specifying hydrate parameter
         with patch("django_datalog.query._hydrate_results") as mock_hydrate:

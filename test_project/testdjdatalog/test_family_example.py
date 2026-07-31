@@ -2,12 +2,20 @@
 Complete example tests using family relationships to demonstrate django_datalog functionality.
 """
 
+from typing import Any
 from unittest.mock import Mock, patch
 
 from django.db.models import Q
 from django.test import TestCase
 
-from django_datalog.models import Var, query
+from django_datalog.models import Fact, Var, query
+
+
+class _PairFact(Fact):
+    """Minimal binary fact used to drive the query pipeline in these tests."""
+
+    subject: Any
+    object: Any
 
 
 class FamilyExampleTests(TestCase):
@@ -57,10 +65,8 @@ class FamilyExampleTests(TestCase):
     @patch("django_datalog.query._hydrate_results")
     def test_family_query_hydration(self, mock_hydrate, mock_satisfy):
         """Test query hydration using family relationship example."""
-        # Mock a ParentOf fact
-        mock_fact = Mock()
-        mock_fact.subject = Mock()  # John
-        mock_fact.object = Var("child")  # Any child
+        # A ParentOf-shaped fact: concrete parent (John), variable child
+        mock_fact = _PairFact(subject=Mock(), object=Var("child"))
 
         # Setup mocks
         mock_pk_results = [{"subject": 1, "object": 2}]  # John -> Alice
