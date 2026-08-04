@@ -161,6 +161,33 @@ A value position stays its value through hydration. An entity position hydrates
 to its model instance and accepts a `where` constraint. Binary `subject`/`object`
 facts are unchanged and keep every query optimization.
 
+### Narrowing a position by its related model
+Attach a `where=Q(...)` to a position's `Var` to filter that position by its
+**related model's** fields. The `Q` fields are the fields of the model at that
+position — `Q(flag="DE")` on a `Var[Vessel]` filters `Vessel.flag`. Use ORM
+lookups to reach further (`Q(owner__country="DE")`).
+
+```python
+# The vessels this user crews on, where the vessel's flag is DE:
+vessels = as_queryset(
+    Crew(user, Var[Rank]("r"), Var[Vessel]("v", where=Q(flag="DE"))),
+    on="vessel",
+)
+vessels = vessels.order_by("name")   # a Vessel queryset — compose it further
+
+# Same filter as raw bindings:
+for row in query(Crew(user, Var[Rank]("r"), Var[Vessel]("v", where=Q(flag="DE")))):
+    row["v"]   # a Vessel whose flag == "DE"
+```
+
+A literal `Q` (one that does not reference another `Var`) filters in the
+**database**, pushed into the join — the query above runs
+`... INNER JOIN vessel ... WHERE (crewstorage.user_id = <user> AND vessel.flag = 'DE')`,
+not a Python post-filter. This works for any position, entity or value: a
+`where` on a value `Var[Rank]` filters the rank column the same way. A `Q` that
+references another variable (e.g. `Q(company=Var("company"))`) is a
+cross-variable constraint — see [Variables & Constraints](#variables--constraints).
+
 ### Typed variables
 `Var` is parametric: `Var[Employee]("emp")` records that the variable stands
 for an `Employee`, so it only fits into `Employee`-typed slots. Create each
@@ -315,11 +342,17 @@ def test_something(self):
 ```
 
 ### Variables & Constraints
+A `Var`'s `where=Q(...)` filters that position by the **related model's** fields.
+A literal `Q` filters in the database (see
+[Narrowing a position by its related model](#narrowing-a-position-by-its-related-model)).
+A `Q` that references another `Var` is a cross-variable constraint, resolved
+across the whole conjunction.
+
 ```python
 # Basic variable (typed — only fits Employee slots)
 emp = Var[Employee]("employee")
 
-# With Django Q constraints
+# With Django Q constraints (fields of the position's model, here Employee)
 senior_emp = Var[Employee]("employee", where=Q(years_experience__gte=5))
 
 # Multiple constraints
