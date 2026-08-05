@@ -46,17 +46,17 @@ from testdjdatalog.models import Company, ParentOf, Person, PersonWorksFor  # no
 
 
 # Inferred facts modelling the access-control shape (self-join + chain + recursion).
-class Colleague(Fact, inferred=True):  # AND-join: two people at the same company
+class Colleague(Fact):  # AND-join: two people at the same company
     subject: Term[Person]
     object: Term[Person]
 
 
-class InNetwork(Fact, inferred=True):  # chain: re-exposes Colleague (level 2)
+class InNetwork(Fact):  # chain: re-exposes Colleague (level 2)
     subject: Term[Person]
     object: Term[Person]
 
 
-class Ancestor(Fact, inferred=True):  # recursive: transitive closure over ParentOf
+class Ancestor(Fact):  # recursive: transitive closure over ParentOf
     subject: Term[Person]
     object: Term[Person]
 
@@ -107,6 +107,19 @@ def timed(label: str, fn):
     print(f"  {label:<44}{dt:10.1f} ms{n:>9} rows{len(ctx.captured_queries):>5} SQL", flush=True)
 
 
+def timed_reorder_compare(label: str, fn):
+    """Run a conjunction with the freedom-based reorder ON, then OFF, for contrast."""
+    import django_datalog.query as _q
+
+    timed(f"{label} [reorder ON]", fn)
+    original = _q._freedom_score
+    _q._freedom_score = lambda condition, bindings: 0.0  # disable: keep written order
+    try:
+        timed(f"{label} [reorder OFF]", fn)
+    finally:
+        _q._freedom_score = original
+
+
 def run_scale(num_people: int, fan_out: int, ancestor_depth: int, queries: set[str]):
     _clear_db()
     people, chain = seed(num_people, fan_out, ancestor_depth)
@@ -135,6 +148,19 @@ def run_scale(num_people: int, fan_out: int, ancestor_depth: int, queries: set[s
         if key in queries:
             timed(label, fn)
 
+    if "conjunction" in queries:
+        # Broad x selective join written broad-first: colleagues of alice via a
+        # shared company. PersonWorksFor(Var, Var) is the whole relation;
+        # PersonWorksFor(alice, Var) is selective. Left-to-right reloads the
+        # selective side once per broad row; the reorder solves selective first.
+        timed_reorder_compare(
+            "conjunction: colleagues-of-alice (broad-first)",
+            lambda: len(list(query(
+                PersonWorksFor(Var[Person]("p"), Var[Company]("c")),
+                PersonWorksFor(alice, Var[Company]("c")),
+            ))),
+        )
+
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
@@ -148,8 +174,8 @@ def main():
                         help="people per company; join blow-up scales with fan_out^2 (default 10)")
     parser.add_argument("--ancestor-depth", type=int, default=12,
                         help="length of the ParentOf chain for the recursive case (default 12)")
-    parser.add_argument("--queries", default="stored,concrete,allvar,chained,recursive",
-                        help="comma-separated subset: stored,concrete,allvar,chained,recursive")
+    parser.add_argument("--queries", default="stored,concrete,allvar,chained,recursive,conjunction",
+                        help="comma-separated subset: stored,concrete,allvar,chained,recursive,conjunction")
     args = parser.parse_args()
     sizes = [int(s) for s in args.sizes.split(",") if s.strip()]
     queries = {q.strip() for q in args.queries.split(",") if q.strip()}
