@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.2] - 2026-08-05
+
+### 🐛 Fixes
+- **`Var(where=Q(...))` in a rule body is now enforced at join time** (GitHub #1). The constraint was applied only when loading stored facts, never during unification. Rules that derive the same head share one fact base, so a row admitted by one rule's load-time filter reached another rule's join and derived a fact that violates its own constraint. A literal `where` (a `Q` with no references to other variables) is now checked in `_unify_facts`; a `Q` that references another variable stays a cross-variable constraint, resolved by the query layer.
+
+### 🚀 Performance
+- **The conjunction engine solves the least-free condition first.** Each later condition reloads once per binding of the earlier ones (bound variables are filtered in Python, not pushed into the DB), so a broad condition written before a selective one made the selective relation reload once per broad row. The engine now picks the condition with the fewest open positions at each step: a fixed position (concrete, or a variable already bound) counts 0, a free variable 1.0, a free variable with a literal `where` 0.5. `AND` is commutative, so results are unchanged. On a broad-by-selective join at N=10,000 this holds the query count flat at 4 instead of ~10,003.
+
+### 📝 Docs
+- Document narrowing a position by its related model: `where=Q(...)` on a position's `Var` filters that position by its model's fields and pushes into the SQL join.
+
 ## [0.6.1] - 2026-07-31
 
 ### 🚀 Features
