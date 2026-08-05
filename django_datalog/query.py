@@ -214,6 +214,26 @@ def _first_to_value(fact_patterns: tuple[Fact, ...], hydrate: bool) -> dict[str,
     return first(*fact_patterns, hydrate=hydrate)
 
 
+def _freedom_score(condition: Fact, bindings: dict[str, Any]) -> float:
+    """How much freedom a condition still has given the current bindings.
+
+    Lower means fewer open positions, so solve it first. A fixed position — a
+    concrete value, or a variable already bound by an earlier condition — adds 0.
+    A free variable adds 1.0; a free variable carrying a literal ``where`` adds
+    only 0.5, since it narrows in the DB. This counts *open* positions rather
+    than summing bound points, so a high-arity condition does not jump the queue
+    just because it has more bound positions: WorksFor(alice, Var) and
+    Crew(alice, master, Var) both have one open position, so they rank together.
+    """
+    freedom = 0.0
+    for position in condition._positions:
+        value = getattr(condition, position)
+        if not isinstance(value, Var) or value.name in bindings:
+            continue  # fixed position: no freedom
+        freedom += 0.5 if value.where is not None else 1.0
+    return freedom
+
+
 def _satisfy_conjunction_with_targeted_facts(conditions, bindings, original_conditions=None) -> Iterator[dict[str, Any]]:
     """Satisfy a conjunction using targeted fact loading - only load facts relevant to the query."""
     if original_conditions is None:
@@ -237,8 +257,17 @@ def _satisfy_conjunction_with_targeted_facts(conditions, bindings, original_cond
             yield bindings
         return
 
-    condition = conditions[0]
-    remaining = conditions[1:]
+    # Solve the least-free condition next. The engine reloads each later
+    # condition once per binding of the earlier ones (bound variables are not
+    # pushed into the DB, only filtered in Python), so putting a low-fan-out
+    # condition first keeps the broad relations from being reloaded many times.
+    # AND is commutative, so reordering never changes the result set.
+    def rank(i):  # fewest open positions first; ties keep original order (stable)
+        return (_freedom_score(conditions[i], bindings), i)
+
+    index = min(range(len(conditions)), key=rank)
+    condition = conditions[index]
+    remaining = conditions[:index] + conditions[index + 1:]
 
     # Get facts relevant to this specific condition (stored + inferred), lazily
     # so a consumer that stops early (exists/first) short-circuits derivation.
