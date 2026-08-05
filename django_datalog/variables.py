@@ -66,6 +66,25 @@ def _value_has_variables(value) -> bool:
         return False
 
 
+def satisfies_constraint(value, q_obj) -> bool:
+    """Check a concrete value against a literal Q constraint (no Var references).
+
+    For a Django model instance, filter its own model by the Q and test that the
+    instance still matches (by pk). A value that is not a saved model instance
+    cannot be evaluated against a Q, so it is treated as passing — the only gate
+    for such a position is the load-time filter.
+    """
+    pk = getattr(value, "pk", None)
+    manager = getattr(type(value), "_default_manager", None)
+    if pk is None or manager is None:
+        return True
+    try:
+        return manager.filter(q_obj).filter(pk=pk).exists()
+    except Exception:
+        # A malformed or inapplicable constraint should not silently drop the row.
+        return True
+
+
 def extract_variable_references(q_obj) -> dict[str, list[str]]:
     """
     Extract variable references from a Q object.

@@ -11,7 +11,7 @@ from typing import Any
 
 from django_datalog.facts import Fact, FactConjunction
 from django_datalog.optimizer import ConstraintPropagator
-from django_datalog.variables import Var
+from django_datalog.variables import Var, has_variable_references, satisfies_constraint
 
 
 @dataclass
@@ -291,6 +291,14 @@ def _unify_facts(pattern_fact: Fact, concrete_fact: Fact) -> dict[str, Any] | No
     fact, or arbitrary fields for an N-ary one). Compares concrete positions by
     pk so a model-instance pattern matches a fact that carries a pk (a fact
     mapped onto an existing table), and vice versa.
+
+    A variable position carrying a literal ``where`` constraint (a ``Q`` with no
+    references to other variables) is enforced here, at join time. Rules that
+    derive the same head share one fact base, so a row admitted by one rule's
+    load-time filter can reach another rule's join. Checking the constraint
+    during unification keeps each rule bound to its own ``where``. A ``where``
+    that references another variable is a cross-variable constraint, left to the
+    query layer's post-join validation.
     """
     bindings = {}
 
@@ -298,6 +306,12 @@ def _unify_facts(pattern_fact: Fact, concrete_fact: Fact) -> dict[str, Any] | No
         pattern_value = getattr(pattern_fact, position)
         concrete_value = getattr(concrete_fact, position)
         if isinstance(pattern_value, Var):
+            if (
+                pattern_value.where is not None
+                and not has_variable_references(pattern_value.where)
+                and not satisfies_constraint(concrete_value, pattern_value.where)
+            ):
+                return None  # Concrete value fails this variable's own constraint
             var_name = pattern_value.name
             if var_name in bindings and _binding_key(bindings[var_name]) != _binding_key(
                 concrete_value
